@@ -18,6 +18,8 @@
 
 
 ## Description
+This repo is folked from https://github.com/nzhangx/trajectoryflowmatching
+
 Trajectory Flow Matching (TFM) is a method that leverages the flow matching technique from generative modeling to model time series. This approach offers a simulation-free training process, allowing for efficient fitting of stochastic differential equations to time-series data. Augmented with memory, time interval prediction, and uncertainty prediction, TFM can better model irregularly sampled trajectories with stochastic nature, for example clinical time series.
 
 <p align="center">
