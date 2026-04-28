@@ -2,6 +2,8 @@ import pytorch_lightning as pl
 import pandas as pd
 import pickle
 import numpy as np
+import importlib
+import sys
 
 # from pytorch_lightning.utilities.types import EVAL_DATALOADERS
 from torch.utils.data import Dataset, DataLoader
@@ -79,12 +81,30 @@ class clinical_DataModule(pl.LightningDataModule):
         return sample
     
     def setup(self, stage=None):
-        self.data = pd.read_pickle(self.file_path)
+        self.data = self._read_pickle_with_numpy_compat(self.file_path)
         if stage == 'fit' or stage is None:
             self.train = self.__filter_data(self.data['train'])
             self.val = self.__filter_data(self.data['val'])
         if stage == 'test' or stage is None:
             self.test = self.__filter_data(self.data['test'])
+
+    def _read_pickle_with_numpy_compat(self, path):
+        """Load pickles across NumPy 1.x/2.x internal module path differences."""
+        try:
+            return pd.read_pickle(path)
+        except ModuleNotFoundError as exc:
+            missing_module = exc.name or ""
+            if missing_module.startswith("numpy._core"):
+                # NumPy 2.x pickle loaded under NumPy 1.x runtime.
+                mapped_module = missing_module.replace("numpy._core", "numpy.core", 1)
+                sys.modules[missing_module] = importlib.import_module(mapped_module)
+                return pd.read_pickle(path)
+            if missing_module.startswith("numpy.core"):
+                # NumPy 1.x pickle loaded under NumPy 2.x runtime.
+                mapped_module = missing_module.replace("numpy.core", "numpy._core", 1)
+                sys.modules[missing_module] = importlib.import_module(mapped_module)
+                return pd.read_pickle(path)
+            raise
 
     def __sort_group__(self, data_set):
         grouped = data_set.groupby('HADM_ID')
