@@ -1,4 +1,4 @@
-name: ti-env
+name: tien_tfm
 channels:
   - conda-forge
   - defaults

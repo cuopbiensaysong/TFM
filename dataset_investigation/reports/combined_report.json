@@ -1,0 +1,327 @@
+{
+  "eICU_cardiacArrest": {
+    "rows": 1650378,
+    "columns": [
+      "HADM_ID",
+      "TIME_FROM_ADM",
+      "time_scaled",
+      "hr_normalized",
+      "dbp_normalized",
+      "rr_normalized",
+      "age_normalized",
+      "MI",
+      "ICU_MORT",
+      "HOSP_MORT",
+      "label"
+    ],
+    "num_columns": 11,
+    "unique_patients": 64589,
+    "label_counts": {
+      "train": 1322663,
+      "val": 164522,
+      "test": 163193
+    },
+    "time_stats": {
+      "min": 0.0,
+      "max": 1.0,
+      "mean": 0.4508898647427707,
+      "is_nonnegative": true
+    },
+    "top_missingness": {
+      "HADM_ID": 0.0,
+      "TIME_FROM_ADM": 0.0,
+      "time_scaled": 0.0,
+      "hr_normalized": 0.0,
+      "dbp_normalized": 0.0,
+      "rr_normalized": 0.0,
+      "age_normalized": 0.0,
+      "MI": 0.0,
+      "ICU_MORT": 0.0,
+      "HOSP_MORT": 0.0
+    },
+    "dictionary_overlap_count": 11,
+    "dictionary_overlap": [
+      "HADM_ID",
+      "HOSP_MORT",
+      "ICU_MORT",
+      "MI",
+      "TIME_FROM_ADM",
+      "age_normalized",
+      "dbp_normalized",
+      "hr_normalized",
+      "label",
+      "rr_normalized",
+      "time_scaled"
+    ],
+    "dictionary_missing_count": 10,
+    "profile_column_coverage": {
+      "eICU": {
+        "present": [
+          "HADM_ID",
+          "hr_normalized"
+        ],
+        "missing": [
+          "apache_outcome_prob",
+          "map_normalized",
+          "norepi_inf_scaled",
+          "time_scaled_v1"
+        ]
+      },
+      "eICU_ablated": {
+        "present": [
+          "HADM_ID",
+          "hr_normalized"
+        ],
+        "missing": [
+          "apache_outcome_prob",
+          "map_normalized",
+          "time_scaled_v1"
+        ]
+      },
+      "eICU_multdim": {
+        "present": [
+          "HADM_ID"
+        ],
+        "missing": [
+          "AGE_AT_ADM_normalized",
+          "dbp_normalized_scaled",
+          "hr_normalized_scaled",
+          "rr_normalized_scaled",
+          "time_scaled_v1"
+        ]
+      },
+      "mimic_liver": {
+        "present": [
+          "HADM_ID"
+        ],
+        "missing": [
+          "1",
+          "MAP",
+          "bloodprod",
+          "prbc_outcome",
+          "pressor",
+          "severe_liver",
+          "time_scaled_v1"
+        ]
+      }
+    }
+  },
+  "eICU_sepsis": {
+    "rows": 147212,
+    "columns": [
+      "HADM_ID",
+      "TIME_FROM_ADM",
+      "time_scaled",
+      "hr_normalized",
+      "map_normalized",
+      "norepi_inf_scaled",
+      "apache_outcome_prob",
+      "apache",
+      "ICU_MORT",
+      "HOSP_MORT",
+      "label"
+    ],
+    "num_columns": 11,
+    "unique_patients": 3362,
+    "label_counts": {
+      "train": 117855,
+      "test": 14872,
+      "val": 14485
+    },
+    "time_stats": {
+      "min": 0.0,
+      "max": 1.0,
+      "mean": 0.4695872798337696,
+      "is_nonnegative": true
+    },
+    "top_missingness": {
+      "HADM_ID": 0.0,
+      "TIME_FROM_ADM": 0.0,
+      "time_scaled": 0.0,
+      "hr_normalized": 0.0,
+      "map_normalized": 0.0,
+      "norepi_inf_scaled": 0.0,
+      "apache_outcome_prob": 0.0,
+      "apache": 0.0,
+      "ICU_MORT": 0.0,
+      "HOSP_MORT": 0.0
+    },
+    "dictionary_overlap_count": 11,
+    "dictionary_overlap": [
+      "HADM_ID",
+      "HOSP_MORT",
+      "ICU_MORT",
+      "TIME_FROM_ADM",
+      "apache",
+      "apache_outcome_prob",
+      "hr_normalized",
+      "label",
+      "map_normalized",
+      "norepi_inf_scaled",
+      "time_scaled"
+    ],
+    "dictionary_missing_count": 10,
+    "profile_column_coverage": {
+      "eICU": {
+        "present": [
+          "HADM_ID",
+          "apache_outcome_prob",
+          "hr_normalized",
+          "map_normalized",
+          "norepi_inf_scaled"
+        ],
+        "missing": [
+          "time_scaled_v1"
+        ]
+      },
+      "eICU_ablated": {
+        "present": [
+          "HADM_ID",
+          "apache_outcome_prob",
+          "hr_normalized",
+          "map_normalized"
+        ],
+        "missing": [
+          "time_scaled_v1"
+        ]
+      },
+      "eICU_multdim": {
+        "present": [
+          "HADM_ID"
+        ],
+        "missing": [
+          "AGE_AT_ADM_normalized",
+          "dbp_normalized_scaled",
+          "hr_normalized_scaled",
+          "rr_normalized_scaled",
+          "time_scaled_v1"
+        ]
+      },
+      "mimic_liver": {
+        "present": [
+          "HADM_ID"
+        ],
+        "missing": [
+          "1",
+          "MAP",
+          "bloodprod",
+          "prbc_outcome",
+          "pressor",
+          "severe_liver",
+          "time_scaled_v1"
+        ]
+      }
+    }
+  },
+  "MIMIC_gib": {
+    "rows": 61741,
+    "columns": [
+      "HADM_ID",
+      "TIME_FROM_ADM",
+      "time_scaled",
+      "hr_normalized",
+      "map_normalized",
+      "prbc",
+      "pressor_gaussian",
+      "bloodprod_gaussian",
+      "severe_liver",
+      "pressor",
+      "bloodprod",
+      "HOSP_MORT",
+      "label"
+    ],
+    "num_columns": 13,
+    "unique_patients": 2602,
+    "label_counts": {
+      "train": 49403,
+      "val": 6314,
+      "test": 6024
+    },
+    "time_stats": {
+      "min": 0.0,
+      "max": 0.9993055555555554,
+      "mean": 0.48399992846460754,
+      "is_nonnegative": true
+    },
+    "top_missingness": {
+      "HADM_ID": 0.0,
+      "TIME_FROM_ADM": 0.0,
+      "time_scaled": 0.0,
+      "hr_normalized": 0.0,
+      "map_normalized": 0.0,
+      "prbc": 0.0,
+      "pressor_gaussian": 0.0,
+      "bloodprod_gaussian": 0.0,
+      "severe_liver": 0.0,
+      "pressor": 0.0
+    },
+    "dictionary_overlap_count": 13,
+    "dictionary_overlap": [
+      "HADM_ID",
+      "HOSP_MORT",
+      "TIME_FROM_ADM",
+      "bloodprod",
+      "bloodprod_gaussian",
+      "hr_normalized",
+      "label",
+      "map_normalized",
+      "prbc",
+      "pressor",
+      "pressor_gaussian",
+      "severe_liver",
+      "time_scaled"
+    ],
+    "dictionary_missing_count": 8,
+    "profile_column_coverage": {
+      "eICU": {
+        "present": [
+          "HADM_ID",
+          "hr_normalized",
+          "map_normalized"
+        ],
+        "missing": [
+          "apache_outcome_prob",
+          "norepi_inf_scaled",
+          "time_scaled_v1"
+        ]
+      },
+      "eICU_ablated": {
+        "present": [
+          "HADM_ID",
+          "hr_normalized",
+          "map_normalized"
+        ],
+        "missing": [
+          "apache_outcome_prob",
+          "time_scaled_v1"
+        ]
+      },
+      "eICU_multdim": {
+        "present": [
+          "HADM_ID"
+        ],
+        "missing": [
+          "AGE_AT_ADM_normalized",
+          "dbp_normalized_scaled",
+          "hr_normalized_scaled",
+          "rr_normalized_scaled",
+          "time_scaled_v1"
+        ]
+      },
+      "mimic_liver": {
+        "present": [
+          "HADM_ID",
+          "bloodprod",
+          "pressor",
+          "severe_liver"
+        ],
+        "missing": [
+          "1",
+          "MAP",
+          "prbc_outcome",
+          "time_scaled_v1"
+        ]
+      }
+    }
+  }
+}

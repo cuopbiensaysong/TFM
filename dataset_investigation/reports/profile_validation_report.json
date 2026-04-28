@@ -1,0 +1,96 @@
+{
+  "eICU": {
+    "ok": true,
+    "source_csv": "tfm-data/eICU_sepsis_physionet.csv",
+    "rows_checked": 2000,
+    "output_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "hr_normalized",
+      "map_normalized",
+      "apache_outcome_prob",
+      "norepi_inf_scaled",
+      "label"
+    ],
+    "required_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "hr_normalized",
+      "map_normalized",
+      "apache_outcome_prob",
+      "norepi_inf_scaled",
+      "label"
+    ]
+  },
+  "eICU_ablated": {
+    "ok": true,
+    "source_csv": "tfm-data/eICU_sepsis_physionet.csv",
+    "rows_checked": 2000,
+    "output_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "hr_normalized",
+      "map_normalized",
+      "apache_outcome_prob",
+      "label"
+    ],
+    "required_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "hr_normalized",
+      "map_normalized",
+      "apache_outcome_prob",
+      "label"
+    ]
+  },
+  "eICU_multdim": {
+    "ok": true,
+    "source_csv": "tfm-data/eICU_cardiacArrest_physionet.csv",
+    "rows_checked": 2000,
+    "output_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "hr_normalized_scaled",
+      "dbp_normalized_scaled",
+      "rr_normalized_scaled",
+      "AGE_AT_ADM_normalized",
+      "label"
+    ],
+    "required_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "hr_normalized_scaled",
+      "dbp_normalized_scaled",
+      "rr_normalized_scaled",
+      "AGE_AT_ADM_normalized",
+      "label"
+    ]
+  },
+  "mimic_liver": {
+    "ok": true,
+    "source_csv": "tfm-data/MIMIC_gib_physionet.csv",
+    "rows_checked": 2000,
+    "output_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "1",
+      "MAP",
+      "prbc_outcome",
+      "pressor",
+      "bloodprod",
+      "severe_liver",
+      "label"
+    ],
+    "required_columns": [
+      "HADM_ID",
+      "time_scaled_v1",
+      "1",
+      "MAP",
+      "prbc_outcome",
+      "pressor",
+      "bloodprod",
+      "severe_liver",
+      "label"
+    ]
+  }
+}

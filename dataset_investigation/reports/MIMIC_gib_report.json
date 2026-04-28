@@ -1,0 +1,111 @@
+{
+  "rows": 61741,
+  "columns": [
+    "HADM_ID",
+    "TIME_FROM_ADM",
+    "time_scaled",
+    "hr_normalized",
+    "map_normalized",
+    "prbc",
+    "pressor_gaussian",
+    "bloodprod_gaussian",
+    "severe_liver",
+    "pressor",
+    "bloodprod",
+    "HOSP_MORT",
+    "label"
+  ],
+  "num_columns": 13,
+  "unique_patients": 2602,
+  "label_counts": {
+    "train": 49403,
+    "val": 6314,
+    "test": 6024
+  },
+  "time_stats": {
+    "min": 0.0,
+    "max": 0.9993055555555554,
+    "mean": 0.48399992846460754,
+    "is_nonnegative": true
+  },
+  "top_missingness": {
+    "HADM_ID": 0.0,
+    "TIME_FROM_ADM": 0.0,
+    "time_scaled": 0.0,
+    "hr_normalized": 0.0,
+    "map_normalized": 0.0,
+    "prbc": 0.0,
+    "pressor_gaussian": 0.0,
+    "bloodprod_gaussian": 0.0,
+    "severe_liver": 0.0,
+    "pressor": 0.0
+  },
+  "dictionary_overlap_count": 13,
+  "dictionary_overlap": [
+    "HADM_ID",
+    "HOSP_MORT",
+    "TIME_FROM_ADM",
+    "bloodprod",
+    "bloodprod_gaussian",
+    "hr_normalized",
+    "label",
+    "map_normalized",
+    "prbc",
+    "pressor",
+    "pressor_gaussian",
+    "severe_liver",
+    "time_scaled"
+  ],
+  "dictionary_missing_count": 8,
+  "profile_column_coverage": {
+    "eICU": {
+      "present": [
+        "HADM_ID",
+        "hr_normalized",
+        "map_normalized"
+      ],
+      "missing": [
+        "apache_outcome_prob",
+        "norepi_inf_scaled",
+        "time_scaled_v1"
+      ]
+    },
+    "eICU_ablated": {
+      "present": [
+        "HADM_ID",
+        "hr_normalized",
+        "map_normalized"
+      ],
+      "missing": [
+        "apache_outcome_prob",
+        "time_scaled_v1"
+      ]
+    },
+    "eICU_multdim": {
+      "present": [
+        "HADM_ID"
+      ],
+      "missing": [
+        "AGE_AT_ADM_normalized",
+        "dbp_normalized_scaled",
+        "hr_normalized_scaled",
+        "rr_normalized_scaled",
+        "time_scaled_v1"
+      ]
+    },
+    "mimic_liver": {
+      "present": [
+        "HADM_ID",
+        "bloodprod",
+        "pressor",
+        "severe_liver"
+      ],
+      "missing": [
+        "1",
+        "MAP",
+        "prbc_outcome",
+        "time_scaled_v1"
+      ]
+    }
+  }
+}

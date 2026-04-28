@@ -1,3 +1,5 @@
 src/outputs/*
 outputs/*
 *pycache*
+tfm-data/*
+dataset_investigation/outputs/*
