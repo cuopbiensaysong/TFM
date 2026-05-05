@@ -2,8 +2,9 @@
 data_module:
   _target_: data.datamodule.clinical_DataModule
   train_consecutive: true
-  file_path: data/toy_data.pkl
-  naming: eICU_DataModule_J30_v1 
+  batch_size: 4
+  file_path: /home/nvidia-lab/ai4life/thaind2/time_series/TFM/data/overfit_data.pkl
+  naming: eICU_DataModule_sepsis
   t_headings: time_scaled_v1
   x_headings: 
     - hr_normalized
@@ -11,4 +12,4 @@ data_module:
   cond_headings:
     - apache_outcome_prob
     - norepi_inf_scaled
-  memory: 0
+  memory: 3

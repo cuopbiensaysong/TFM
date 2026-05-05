@@ -3,3 +3,9 @@ outputs/*
 *pycache*
 tfm-data/*
 dataset_investigation/outputs/*
+wandb_log/*
+checkpoints/*
+.env
+data/*
+notebooks/*.png
+notebooks/*.pkl

@@ -97,12 +97,12 @@
       "present": [
         "HADM_ID",
         "bloodprod",
+        "map_normalized",
         "pressor",
         "severe_liver"
       ],
       "missing": [
-        "1",
-        "MAP",
+        "hr_normalized_scaled",
         "prbc_outcome",
         "time_scaled_v1"
       ]

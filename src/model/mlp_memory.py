@@ -38,8 +38,10 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
                  sde_noise = 0.1,
                  clip = None,
                  naming = None,
-
+                 ode_t_span_points: int = 10,
                  ):
+        if ode_t_span_points < 2:
+            raise ValueError("ode_t_span_points must be >= 2 (torch.linspace endpoints).")
         super().__init__()
         self.model = MLP_conditional_liver_pe_memory(dim=dim, 
                                               w=w, 
@@ -64,6 +66,7 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
         self.memory = memory
         self.sde_noise = sde_noise
         self.clip = clip
+        self.ode_t_span_points = int(ode_t_span_points)
         if self.memory > 1:
             self.naming += "_Memory_"+str(self.memory)
             
@@ -226,7 +229,9 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
         for i in range(len_path): 
             # print(i)
             t_max = (times_x1[i]-times_x0[i])
-            time_span = self.__convert_tensor__(torch.linspace(times_x0[i], times_x1[i], 10)).to(x0_values.device)
+            time_span = self.__convert_tensor__(
+                torch.linspace(times_x0[i], times_x1[i], self.ode_t_span_points)
+            ).to(x0_values.device)
 
             new_x_classes = torch.cat([x0_classes[i][:-(self.memory*self.dim)].unsqueeze(0), time_history.unsqueeze(0)], dim=1)
             with torch.no_grad():
@@ -294,7 +299,9 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
 
         for i in range(len_path): 
 
-            time_span = self.__convert_tensor__(torch.linspace(times_x0[i], times_x1[i], 10)).to(x0_values.device)
+            time_span = self.__convert_tensor__(
+                torch.linspace(times_x0[i], times_x1[i], self.ode_t_span_points)
+            ).to(x0_values.device)
 
             new_x_classes = torch.cat([x0_classes[i][:-(self.memory*self.dim)].unsqueeze(0), time_history.unsqueeze(0)], dim=1)
             with torch.no_grad():

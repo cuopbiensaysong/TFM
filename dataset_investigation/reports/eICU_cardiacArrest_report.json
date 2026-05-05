@@ -23,7 +23,7 @@
   "time_stats": {
     "min": 0.0,
     "max": 1.0,
-    "mean": 0.4508898647427707,
+    "mean": 0.4508898647427708,
     "is_nonnegative": true
   },
   "top_missingness": {
@@ -94,9 +94,9 @@
         "HADM_ID"
       ],
       "missing": [
-        "1",
-        "MAP",
         "bloodprod",
+        "hr_normalized_scaled",
+        "map_normalized",
         "prbc_outcome",
         "pressor",
         "severe_liver",

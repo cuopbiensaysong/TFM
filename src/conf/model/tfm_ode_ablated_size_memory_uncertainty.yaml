@@ -8,6 +8,7 @@ model_module:
   dim: 2
   clip: 1e-2
   sigma: 0.1
+  ode_t_span_points: 10
   metrics:
     - variance_dist
     - mse_loss

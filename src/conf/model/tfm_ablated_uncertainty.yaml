@@ -9,6 +9,7 @@ model_module:
   implementation: SDE
   clip: 1e-2
   sigma: 0.1
+  ode_t_span_points: 10
   dim: 2
   metrics:
     - variance_dist

@@ -15,6 +15,28 @@ import numpy as np
 import wandb
 from pytorch_lightning.loggers import WandbLogger
 import os
+from pathlib import Path
+
+
+def load_env_file() -> None:
+    """Load KEY=VALUE entries from .env into process env."""
+    env_candidates = [
+        Path(__file__).resolve().parent.parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    for env_path in env_candidates:
+        if not env_path.exists():
+            continue
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+        break
+
+
+load_env_file()
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -26,6 +48,12 @@ import pytorch_lightning as pl
 from hydra.utils import instantiate
 
 from pytorch_lightning.strategies import DDPStrategy
+
+# import debugpy
+# debugpy.listen(5678)
+# print("Waiting for debugger attach")
+# debugpy.wait_for_client()
+# print("Debugger attached")
 
 @hydra.main(config_path="conf", config_name="config")
 def train_model(cfg):
@@ -73,17 +101,18 @@ def train_model(cfg):
 
     if cfg.wandb_logging and not(cfg.skip_training):
         wandb.init(project="clinical_trajectory",
-                    dir = '/home/mila/x/xi.zhang/scratch/shung_ICU/wandb_log/',
+                    dir = 'wandb_log/',
+                    name = 'overfit_first_200',
                     config = wandb_config
                     )
         wandb_logger = WandbLogger()
 
-    ckpt_savedir = '/home/mila/x/xi.zhang/scratch/shung_ICU/checkpoints/'+model.naming+'_'+data_module.naming+'/'
+    ckpt_savedir = 'checkpoints/'+model.naming+'_'+data_module.naming+'/'
     if not os.path.exists(ckpt_savedir):
         os.makedirs(ckpt_savedir)
 
     checkpoint_callback = ModelCheckpoint(
-        dirpath='/home/mila/x/xi.zhang/scratch/shung_ICU/checkpoints/'+model.naming+'_'+data_module.naming+'/',
+        dirpath='checkpoints/'+model.naming+'_'+data_module.naming+'/',
         filename='best_model',
         save_top_k=1,
         verbose=True,
@@ -116,7 +145,8 @@ def train_model(cfg):
     trainer.fit(model, datamodule=data_module)
 
     # Test the model
-    trainer.test(model, datamodule=data_module)
+    # trainer.test(model, datamodule=data_module)
+    trainer.test(datamodule=data_module, ckpt_path="best")
 
     wandb.finish()
 

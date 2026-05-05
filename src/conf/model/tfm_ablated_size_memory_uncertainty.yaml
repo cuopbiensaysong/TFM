@@ -6,6 +6,7 @@ model_module:
   treatment_cond: 0
   memory: 3
   dim: 2
+  ode_t_span_points: 10
   implementation: SDE
   sde_noise: 0.1
   clip: 1e-2

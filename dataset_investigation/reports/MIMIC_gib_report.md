@@ -22,5 +22,5 @@
 - `eICU_ablated` missing: apache_outcome_prob, time_scaled_v1
 - `eICU_multdim` present: HADM_ID
 - `eICU_multdim` missing: AGE_AT_ADM_normalized, dbp_normalized_scaled, hr_normalized_scaled, rr_normalized_scaled, time_scaled_v1
-- `mimic_liver` present: HADM_ID, bloodprod, pressor, severe_liver
-- `mimic_liver` missing: 1, MAP, prbc_outcome, time_scaled_v1
+- `mimic_liver` present: HADM_ID, bloodprod, map_normalized, pressor, severe_liver
+- `mimic_liver` missing: hr_normalized_scaled, prbc_outcome, time_scaled_v1

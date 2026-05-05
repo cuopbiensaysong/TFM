@@ -110,4 +110,4 @@ PY
 - `time_scaled_v1` is created from existing `time_scaled`.
 - Profile-specific aliases are applied where needed:
   - `eICU_multdim`: creates `*_scaled` columns from available normalized columns and maps `age_normalized` to `AGE_AT_ADM_normalized`.
-  - `mimic_liver`: maps `map_normalized` -> `MAP`, `prbc` -> `prbc_outcome`, and creates constant feature column `1`.
+  - `mimic_liver`: creates `hr_normalized_scaled` from `hr_normalized`, normalizes map as `map_normalized` (supports `map`/`MAP` inputs), and maps `prbc` -> `prbc_outcome`.

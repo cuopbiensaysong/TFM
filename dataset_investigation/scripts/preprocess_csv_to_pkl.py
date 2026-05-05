@@ -40,8 +40,28 @@ PROFILE_SPECS: Dict[str, Dict[str, List[str]]] = {
         ],
     },
     "mimic_liver": {
-        "required": ["HADM_ID", "time_scaled_v1", "1", "MAP", "prbc_outcome", "pressor", "bloodprod", "severe_liver", "label"],
-        "ordered_output": ["HADM_ID", "time_scaled_v1", "1", "MAP", "prbc_outcome", "pressor", "bloodprod", "severe_liver", "label"],
+        "required": [
+            "HADM_ID",
+            "time_scaled_v1",
+            "hr_normalized_scaled",
+            "map_normalized",
+            "prbc_outcome",
+            "pressor",
+            "bloodprod",
+            "severe_liver",
+            "label",
+        ],
+        "ordered_output": [
+            "HADM_ID",
+            "time_scaled_v1",
+            "hr_normalized_scaled",
+            "map_normalized",
+            "prbc_outcome",
+            "pressor",
+            "bloodprod",
+            "severe_liver",
+            "label",
+        ],
     },
 }
 
@@ -73,17 +93,17 @@ def apply_profile_aliases(df: pd.DataFrame, profile: str) -> pd.DataFrame:
                 df[target] = pd.to_numeric(df[src], errors="coerce")
 
     if profile == "mimic_liver":
-        if "MAP" not in df.columns:
-            if "map_normalized" in df.columns:
-                df["MAP"] = pd.to_numeric(df["map_normalized"], errors="coerce")
-            elif "map" in df.columns:
-                df["MAP"] = pd.to_numeric(df["map"], errors="coerce")
+        if "hr_normalized_scaled" not in df.columns and "hr_normalized" in df.columns:
+            df["hr_normalized_scaled"] = pd.to_numeric(df["hr_normalized"], errors="coerce")
+
+        if "map_normalized" not in df.columns:
+            if "map" in df.columns:
+                df["map_normalized"] = pd.to_numeric(df["map"], errors="coerce")
+            elif "MAP" in df.columns:
+                df["map_normalized"] = pd.to_numeric(df["MAP"], errors="coerce")
 
         if "prbc_outcome" not in df.columns and "prbc" in df.columns:
             df["prbc_outcome"] = pd.to_numeric(df["prbc"], errors="coerce")
-
-        if "1" not in df.columns:
-            df["1"] = 1.0
 
     return df
 

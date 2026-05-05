@@ -152,6 +152,22 @@ def mse_loss(pred, true):
 def l1_loss(pred, true):
     return torch.mean(torch.abs(pred - true))
 
+def resolve_loss_fn(loss_fn):
+    """Allow selecting a loss by config string or callable."""
+    if callable(loss_fn):
+        return loss_fn
+    if isinstance(loss_fn, str):
+        registry = {
+            "mse_loss": mse_loss,
+            "l1_loss": l1_loss,
+        }
+        if loss_fn not in registry:
+            raise ValueError(
+                f"Unsupported loss_fn '{loss_fn}'. Choose from: {list(registry.keys())}"
+            )
+        return registry[loss_fn]
+    raise TypeError(f"loss_fn must be callable or str, got {type(loss_fn)}")
+
 class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
     def __init__(self, 
                  treatment_cond,
@@ -163,13 +179,16 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
                  lr=1e-6,
                  sigma = 0.1, 
                  loss_fn = mse_loss,
+                # loss_fn = l1_loss,
                  metrics = ['mse_loss', 'l1_loss'],
                  implementation = "ODE", # can be SDE
                  sde_noise = 0.1,
                  clip = None,
                  naming = None,
-
+                 ode_t_span_points: int = 10,
                  ):
+        if ode_t_span_points < 2:
+            raise ValueError("ode_t_span_points must be >= 2 (torch.linspace endpoints).")
         super().__init__()
         self.flow_model = MLP_conditional_memory(dim=dim, 
                                               w=w, 
@@ -195,7 +214,7 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
                                                         memory=memory,
                                                         clip = clip)
         self.automatic_optimization = False 
-        self.loss_fn = loss_fn
+        self.loss_fn = resolve_loss_fn(loss_fn)
         self.save_hyperparameters()
         self.dim = dim
         # self.out_dim = out_dim
@@ -211,6 +230,8 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         self.memory = memory
         self.sde_noise = sde_noise
         self.clip = clip
+        self.ode_t_span_points = int(ode_t_span_points)
+
         if self.memory > 1:
             self.naming += "_Memory_"+str(self.memory)
             
@@ -369,6 +390,7 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
             return self.test_trajectory_sde(pt_tensor)
     
     def test_trajectory_ode(self,pt_tensor):
+        print(f"Using ODE with {self.ode_t_span_points} points per interval.")
         """test_trajectory
 
         Args:
@@ -408,7 +430,9 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         time_history = x0_classes[0][-(self.memory*self.dim):]
 
         for i in range(len_path): 
-            time_span = self.__convert_tensor__(torch.linspace(times_x0[i], times_x1[i], 10)).to(x0_values.device)
+            time_span = self.__convert_tensor__(
+                torch.linspace(times_x0[i], times_x1[i], self.ode_t_span_points)
+            ).to(x0_values.device)
 
             new_x_classes = torch.cat([x0_classes[i][:-(self.memory*self.dim)].unsqueeze(0), time_history.unsqueeze(0)], dim=1)
             with torch.no_grad():
@@ -488,7 +512,9 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
 
         for i in range(len_path): 
 
-            time_span = self.__convert_tensor__(torch.linspace(times_x0[i], times_x1[i], 10)).to(x0_values.device)
+            time_span = self.__convert_tensor__(
+                torch.linspace(times_x0[i], times_x1[i], self.ode_t_span_points)
+            ).to(x0_values.device)
 
             new_x_classes = torch.cat([x0_classes[i][:-(self.memory*self.dim)].unsqueeze(0), time_history.unsqueeze(0)], dim=1)
             with torch.no_grad():

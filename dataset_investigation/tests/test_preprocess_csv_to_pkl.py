@@ -40,7 +40,8 @@ class TestPreprocessCsvToPkl(unittest.TestCase):
             {
                 "HADM_ID": [1, 2, 3],
                 "time_scaled": [0.1, 0.2, 0.3],
-                "map_normalized": [0.4, 0.5, 0.6],
+                "hr_normalized": [0.11, 0.22, 0.33],
+                "MAP": [0.4, 0.5, 0.6],
                 "prbc": [1, 0, 1],
                 "pressor": [1, 0, 1],
                 "bloodprod": [0, 1, 1],
@@ -49,10 +50,11 @@ class TestPreprocessCsvToPkl(unittest.TestCase):
             }
         )
         out = convert_dataframe_for_profile(df, "mimic_liver")
-        self.assertIn("MAP", out.columns)
+        self.assertIn("hr_normalized_scaled", out.columns)
+        self.assertIn("map_normalized", out.columns)
         self.assertIn("prbc_outcome", out.columns)
-        self.assertIn("1", out.columns)
-        self.assertTrue((out["1"] == 1).all())
+        self.assertEqual(out["hr_normalized_scaled"].tolist(), df["hr_normalized"].tolist())
+        self.assertEqual(out["map_normalized"].tolist(), df["MAP"].tolist())
 
     def test_validate_profile_contract_raises_when_missing_columns(self):
         df = pd.DataFrame({"HADM_ID": [1], "time_scaled_v1": [0.1], "label": ["train"]})

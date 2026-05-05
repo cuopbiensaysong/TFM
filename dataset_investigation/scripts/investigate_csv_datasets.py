@@ -21,7 +21,16 @@ PROFILE_COLUMNS = {
     "eICU": ["HADM_ID", "time_scaled_v1", "hr_normalized", "map_normalized", "apache_outcome_prob", "norepi_inf_scaled"],
     "eICU_ablated": ["HADM_ID", "time_scaled_v1", "hr_normalized", "map_normalized", "apache_outcome_prob"],
     "eICU_multdim": ["HADM_ID", "time_scaled_v1", "hr_normalized_scaled", "dbp_normalized_scaled", "rr_normalized_scaled", "AGE_AT_ADM_normalized"],
-    "mimic_liver": ["HADM_ID", "time_scaled_v1", "1", "MAP", "prbc_outcome", "pressor", "bloodprod", "severe_liver"],
+    "mimic_liver": [
+        "HADM_ID",
+        "time_scaled_v1",
+        "hr_normalized_scaled",
+        "map_normalized",
+        "prbc_outcome",
+        "pressor",
+        "bloodprod",
+        "severe_liver",
+    ],
 }
 
 

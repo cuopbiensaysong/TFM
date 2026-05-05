@@ -24,7 +24,7 @@
     "time_stats": {
       "min": 0.0,
       "max": 1.0,
-      "mean": 0.4508898647427707,
+      "mean": 0.4508898647427708,
       "is_nonnegative": true
     },
     "top_missingness": {
@@ -95,9 +95,9 @@
           "HADM_ID"
         ],
         "missing": [
-          "1",
-          "MAP",
           "bloodprod",
+          "hr_normalized_scaled",
+          "map_normalized",
           "prbc_outcome",
           "pressor",
           "severe_liver",
@@ -131,7 +131,7 @@
     "time_stats": {
       "min": 0.0,
       "max": 1.0,
-      "mean": 0.4695872798337696,
+      "mean": 0.46958727983376963,
       "is_nonnegative": true
     },
     "top_missingness": {
@@ -199,12 +199,12 @@
       },
       "mimic_liver": {
         "present": [
-          "HADM_ID"
+          "HADM_ID",
+          "map_normalized"
         ],
         "missing": [
-          "1",
-          "MAP",
           "bloodprod",
+          "hr_normalized_scaled",
           "prbc_outcome",
           "pressor",
           "severe_liver",
@@ -312,12 +312,12 @@
         "present": [
           "HADM_ID",
           "bloodprod",
+          "map_normalized",
           "pressor",
           "severe_liver"
         ],
         "missing": [
-          "1",
-          "MAP",
+          "hr_normalized_scaled",
           "prbc_outcome",
           "time_scaled_v1"
         ]
