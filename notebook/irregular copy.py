@@ -9,6 +9,7 @@ from torchdyn.core import NeuralODE
 
 import matplotlib.pyplot as plt
 import pickle
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 # %% [markdown]
@@ -64,7 +65,8 @@ x0 = 1.0  # Initial position
 v0 = 0.0  # Initial velocity
 m = 1.0   # Mass
 k = 1.0   # Spring constant
-c = np.array([0.25, 2, 3.75]) # np.arange(0.25,5.25,0.25)   # Viscous force coefficient
+c = np.array([0.25, 2, 0.25]) # np.arange(0.25,5.25,0.25)   # Viscous force coefficient
+# c = np.array([0.25, 2, 3.75])
 t_max = 10
 
 X = []
@@ -79,11 +81,14 @@ for ci in c:
     T.append(ti)
     labels.append(labeli)
 
+X[2] = -X[2]
 
 colors = ['red', 'green', 'blue']
 for i, x in enumerate(X):
     labeli = labels[i]
     plt.plot(T[i], x, label=labeli, color=colors[i])
+
+
 
 # for i, x in enumerate(X):
 #     labeli = labels[i]
@@ -94,24 +99,55 @@ plt.title(f'Harmonic Oscillator')
 plt.legend()
 plt.show()
 
+# %%
+
+
+# %%
+num_sparse_points = 99
+
+# TODO: Pick random 20 points from each trajectory
+
+_rng = np.random.default_rng(10)
+plt.figure()
+X_new, T_new = [], []
+for traj_idx, (xi, ti, labeli, color) in enumerate(zip(X, T, labels, colors)):
+    n = len(ti)
+    k = min(num_sparse_points, n)
+    idx = np.sort(_rng.choice(n, size=k, replace=False))
+    # plt.scatter(ti[idx], xi[idx], label=labeli, color=color, s=35, alpha=0.85)
+    X_new.append(xi[idx])
+    T_new.append(ti[idx])
+    plt.scatter(ti[idx], xi[idx], label=labeli, color=color, s=35, alpha=0.85)
+
+
+plt.xlabel('Time')
+plt.ylabel('Position')
+plt.title(f'Irregular sampling: {num_sparse_points} random time indices per trajectory')
+plt.legend()
+# plt.savefig(os.path.join(_plot_dir, 'irregular_data_plot.png'), dpi=150, bbox_inches='tight')
+plt.show()
+
 
 # %%
 # Create "HADM_ID" column to label the three distinct oscillation groups
-hadm_id = [1]*100 + [2]*100 + [3]*100  # Repeats 1, 2, and 3, each 100 times
+hadm_id = [1]*num_sparse_points + [2]*num_sparse_points + [3]*num_sparse_points  # Repeats 1, 2, and 3, each 100 times
 
 # Scale time values T to range between 0 and 1
-T = [t/10 for t in T]
+T_new = [t/10 for t in T_new]
 
 # # Identify indices where oscillation changes (i.e., where HADM_ID changes)
 # end_pt_indices = torch.nonzero(hadm_id[1:] != hadm_id[:-1], as_tuple=False).squeeze() + 1
 
 # Create a DataFrame with the relevant columns
 # for this dataset, normalization of x is skipped
+
+
+# %%
 df = pd.DataFrame({
     'HADM_ID': hadm_id,
-    'x': torch.tensor(np.concatenate(X), dtype=torch.float32).numpy(),
-    'c': torch.tensor(c).repeat_interleave(100).type(torch.float32).numpy(),
-    't': torch.tensor(np.concatenate(T), dtype=torch.float32).numpy()
+    'x': torch.tensor(np.concatenate(X_new), dtype=torch.float32).numpy(),
+    'c': torch.tensor(c).repeat_interleave(num_sparse_points).type(torch.float32).numpy(),
+    't': torch.tensor(np.concatenate(T_new), dtype=torch.float32).numpy()
 })
 
 # # Prepare data dictionary for PyTorch Lightning
@@ -418,6 +454,7 @@ def positional_encoding_tensor(time_tensor, num_frequencies=NUM_FREQS, base=PE_B
 
     # Compute the arguments for the sine and cosine functions using the custom base
     frequencies = torch.pow(base, -torch.arange(0, num_frequencies, dtype=torch.float32) / num_frequencies)
+    frequencies = frequencies.to(time_tensor.device)
     angles = time_tensor * frequencies
 
     # Compute the sine and cosine for even and odd indices respectively
@@ -647,7 +684,7 @@ class MLP_Cond_Memory_Module(torch.nn.Module):
 
 
 # %%
-def train_model(model, noise_prediction, train_loader, val_loader=None, num_epochs=10, device='cuda'):
+def train_model(model, noise_prediction, train_loader, val_loader=None, num_epochs=10, validation_interval=100, device='cuda'):
     model.to(device)
 
     # with noise prediction
@@ -711,7 +748,7 @@ def train_model(model, noise_prediction, train_loader, val_loader=None, num_epoc
                 train_loss += loss.item()
 
         # validation
-        if (epoch+1) % 100 == 0:
+        if (epoch+1) % validation_interval == 0:
             print(f"Epoch {epoch+1}/{num_epochs}, Loss: {train_loss/len(train_loader)}")
             if val_loader: 
                 test_model(model, noise_prediction, val_loader, device)
@@ -720,7 +757,7 @@ def train_model(model, noise_prediction, train_loader, val_loader=None, num_epoc
 def test_model(model, noise_prediction, test_loader, device):
     model.eval()  # Set the model to evaluation mode
     list_of_pairs = []
-    list_of_times = []
+    list_of_times = {}
 
     dict_full_trajs = {}
     dict_pred_trajs = {}
@@ -728,27 +765,28 @@ def test_model(model, noise_prediction, test_loader, device):
     loss_sum = 0
     with torch.no_grad():
         for batch_idx, batch in enumerate(test_loader):
+            
             batch = [x.to(device) for x in batch]
             loss, pairs, metricD, noise_loss, noise_pair, full_time = test_func_step(batch, batch_idx, model, noise_prediction)
             list_of_pairs.append(pairs)
-            list_of_times.append(full_time)
+            list_of_times[batch_idx] = full_time
             full_traj = pairs[0][0]
             pred_traj = pairs[0][1]
             dict_full_trajs[batch_idx] = full_traj.detach().cpu().numpy()
             dict_pred_trajs[batch_idx] = pred_traj.detach().cpu().numpy()
             loss_sum += loss
-
+        # print(list_of_times)
         fig = plt.figure(figsize=(5, 4))
         ax = fig.add_subplot(111)
         colors = ['red', 'green', 'blue']
-        T = np.arange(0,1,0.01)
+        # T = np.arange(0,1,0.01)
         count = 0
-        for _,v in dict_pred_trajs.items():
-            ax.plot(T[model.memory:], v, label="predicted" if count == 0 else '', color=colors[count])
+        for batch_idx,v in dict_pred_trajs.items():
+            ax.plot(list_of_times[batch_idx], v, label="predicted" if count == 0 else '', color=colors[count])
             count += 1
         count = 0
-        for _,v in dict_full_trajs.items():
-            ax.plot(T[model.memory:], v, label="ground truth" if count == 0 else '', color=colors[count], linestyle='--')
+        for batch_idx,v in dict_full_trajs.items():
+            ax.plot(list_of_times[batch_idx], v, label="ground truth" if count == 0 else '', color=colors[count], linestyle='--')
             count += 1
 
         ax.set_xlabel('scaled t', fontsize='10')
@@ -1017,6 +1055,12 @@ model = MLP_Cond_Memory_Module(treatment_cond=0, memory=3,
 
 # Train the model
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-train_model(model, False, train_loader_1d_3m, val_loader_1d_3m, num_epochs=1000, device=device)
+train_model(model, False, train_loader_1d_3m, val_loader_1d_3m, num_epochs=4000, validation_interval=200, device=device)
+
+# %%
+
+
+# %%
+
 
 
