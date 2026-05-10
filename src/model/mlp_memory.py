@@ -18,58 +18,78 @@ from utils.sde import SDE
 from model.components.positional_encoding import *
 from model.components.mlp import * # in case need wrapper
 from model.components.grad_util import torch_wrapper_tv
-from utils.loss import mse_loss, l1_loss
+from utils.loss import (
+    mse_loss, l1_loss, gaussian_nll_loss, mdn_loss,
+    quantile_loss, l1_variance_loss, resolve_loss_fn,
+)
 
 
 
 class MLP_Cond_Memory_Module(pl.LightningModule):
-    def __init__(self, 
-                 treatment_cond,
-                 memory=3, # can increase / tune to see effect
-                 dim=2, 
-                 w=64, 
-                 time_varying=True, 
-                 conditional=True,
-                 lr=1e-6,
-                 sigma = 0.1, 
-                 loss_fn = mse_loss,
-                 metrics = ['mse_loss', 'l1_loss'],
-                 implementation = "ODE", # can be SDE
-                 sde_noise = 0.1,
-                 clip = None,
-                 naming = None,
-                 ode_t_span_points: int = 10,
-                 ):
+    def __init__(
+        self,
+        treatment_cond,
+        memory=3, # can increase / tune to see effect
+        dim=2,
+        w=64,
+        time_varying=True,
+        conditional=True,
+        lr=1e-6,
+        sigma=0.1,
+        loss_fn=mse_loss,
+        metrics=("mse_loss", "l1_loss"),
+        implementation="ODE", # can be SDE
+        sde_noise=0.1,
+        clip=None,
+        naming=None,
+        ode_t_span_points: int = 10,
+        distributional=None,
+        n_components=3,
+        n_quantiles=3,
+        quantile_levels=(0.1, 0.5, 0.9),
+        lambda_var=0.1,
+    ):
         if ode_t_span_points < 2:
             raise ValueError("ode_t_span_points must be >= 2 (torch.linspace endpoints).")
         super().__init__()
-        self.model = MLP_conditional_liver_pe_memory(dim=dim, 
-                                              w=w, 
-                                              time_varying=time_varying, 
-                                              conditional=conditional, 
-                                              treatment_cond=treatment_cond,
-                                              memory=memory,
-                                              clip = clip)
-        self.loss_fn = loss_fn
+        self.model = MLP_conditional_liver_pe_memory(
+            dim=dim,
+            w=w,
+            time_varying=time_varying,
+            conditional=conditional,
+            treatment_cond=treatment_cond,
+            memory=memory,
+            clip=clip,
+            distributional=distributional,
+            n_components=n_components,
+            n_quantiles=n_quantiles,
+        )
+        self.loss_fn = resolve_loss_fn(loss_fn) if not isinstance(loss_fn, str) or loss_fn in ("mse_loss", "l1_loss") else loss_fn
         self.save_hyperparameters()
         self.dim = dim
-        # self.out_dim = out_dim
         self.w = w
         self.time_varying = time_varying
         self.conditional = conditional
         self.treatment_cond = treatment_cond
         self.lr = lr
         self.sigma = sigma
-        self.naming = "MLP_Cond_memory_Module_"+implementation if naming is None else naming
-        self.metrics = metrics
+        self.naming = "MLP_Cond_memory_Module_" + implementation if naming is None else naming
+        self.metrics = list(metrics)
         self.implementation = implementation
         self.memory = memory
         self.sde_noise = sde_noise
         self.clip = clip
         self.ode_t_span_points = int(ode_t_span_points)
+        self.distributional = distributional
+        self.n_components = n_components
+        self.n_quantiles = n_quantiles
+        self.quantile_levels = tuple(quantile_levels) if quantile_levels else (0.1, 0.5, 0.9)
+        self.lambda_var = lambda_var
         if self.memory > 1:
-            self.naming += "_Memory_"+str(self.memory)
-            
+            self.naming += "_Memory_" + str(self.memory)
+        if self.distributional:
+            self.naming += "_" + self.distributional
+
     def __convert_tensor__(self, tensor):
         return tensor.to(torch.float32)
 
@@ -80,17 +100,14 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
         t0 = t0.squeeze()
         t1 = t1.squeeze()
 
-        t = torch.rand(x0.shape[0],1).to(x0.device)
+        t = torch.rand(x0.shape[0], 1).to(x0.device)
         mu_t = x0 * (1 - t) + x1 * t
         data_t_diff = (t1 - t0).unsqueeze(1)
         x = mu_t + self.sigma * torch.randn(x0.shape[0], self.dim).to(x0.device)
-
         ut = (x1 - x0) / (data_t_diff + 1e-4)
         t_model = t * data_t_diff + t0.unsqueeze(1)
         futuretime = t1 - t_model
-
         return x, ut, t_model, futuretime, t
-    
     def training_step(self, batch, batch_idx):
         """_summary_
 
@@ -102,30 +119,67 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
             _type_: _description_
         """
         x0, x0_class, x1, x0_time, x1_time = batch
-        x0, x0_class, x1, x0_time, x1_time = self.__convert_tensor__(x0), self.__convert_tensor__(x0_class), self.__convert_tensor__(x1), self.__convert_tensor__(x0_time), self.__convert_tensor__(x1_time)
-
+        x0 = self.__convert_tensor__(x0)
+        x0_class = self.__convert_tensor__(x0_class)
+        x1 = self.__convert_tensor__(x1)
+        x0_time = self.__convert_tensor__(x0_time)
+        x1_time = self.__convert_tensor__(x1_time)
 
         x, ut, t_model, futuretime, t = self.__x_processing__(x0, x1, x0_time, x1_time)
-        
 
         if len(x0_class.shape) == 3:
             x0_class = x0_class.squeeze()
 
-        in_tensor = torch.cat([x,x0_class, t_model], dim = -1)
-        xt = self.model.forward_train(in_tensor)
+        in_tensor = torch.cat([x, x0_class, t_model], dim=-1)
+        output = self.model.forward_train(in_tensor)
 
-        if self.implementation == "SDE":
-            variance = t*(1-t)*self.sde_noise
-            noise = torch.randn_like(xt[:,:self.dim]) * torch.sqrt(variance)
-            loss = self.loss_fn(xt[:,:self.dim] + noise, x1) + self.loss_fn(xt[:,-1], futuretime)
-        else:
-            loss = self.loss_fn(xt[:,:self.dim], x1) + self.loss_fn(xt[:,-1], futuretime)
+        loss = self._compute_loss(output, x1, futuretime, t)
         self.log('train_loss', loss)
         return loss
 
+    def _compute_loss(self, output, x1_target, futuretime, t=None):
+        """Compute loss based on distributional mode."""
+        if self.distributional == "gaussian_nll":
+            mu, log_var, _cond, time_remaining = output
+            loss_coord = gaussian_nll_loss(mu, log_var, x1_target[:, :self.dim])
+            loss_time = mse_loss(time_remaining.squeeze(-1), futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        elif self.distributional == "mdn":
+            pi, mu, sigma, _cond, time_remaining = output
+            loss_coord = mdn_loss(pi, mu, sigma, x1_target[:, :self.dim])
+            loss_time = mse_loss(time_remaining.squeeze(-1), futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        elif self.distributional == "quantile":
+            quantile_preds, _cond, time_remaining = output
+            loss_coord = quantile_loss(quantile_preds, x1_target[:, :self.dim],
+                                       quantiles=self.quantile_levels)
+            loss_time = mse_loss(time_remaining.squeeze(-1), futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        elif self.distributional == "l1_variance":
+            pred_x1 = output[:, :self.dim]
+            pred_time = output[:, -1]
+            loss_coord = l1_variance_loss(pred_x1, x1_target[:, :self.dim],
+                                          lambda_var=self.lambda_var)
+            loss_time = mse_loss(pred_time, futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        else:
+            if self.implementation == "SDE" and t is not None:
+                variance = t * (1 - t) * self.sde_noise
+                noise = torch.randn_like(output[:, :self.dim]) * torch.sqrt(variance)
+                loss = self.loss_fn(output[:, :self.dim] + noise, x1_target) + \
+                       self.loss_fn(output[:, -1], futuretime.squeeze(-1))
+            else:
+                loss = self.loss_fn(output[:, :self.dim], x1_target) + \
+                       self.loss_fn(output[:, -1], futuretime.squeeze(-1))
+            return loss
+
     def config_optimizer(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr)
-    
+
     def validation_step(self, batch, batch_idx):
         """validation_step
 
@@ -175,11 +229,23 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
                                full_traj, 
                                t_span=full_time,
                                title="{}_trajectory_patient_{}".format(mode, batch_idx))
+        dim_fig = plot_trajectory_dimensions(
+            pred_traj,
+            full_traj,
+            t_span=full_time,
+            title="{}_trajectory_dimensions_patient_{}".format(mode, batch_idx),
+        )
         if self.logger:
             # may cause problem if wandb disabled
-            self.logger.experiment.log({"{}_trajectory_patient_{}".format(mode, batch_idx): wandb.Image(fig)})
+            self.logger.experiment.log(
+                {
+                    "{}_trajectory_patient_{}".format(mode, batch_idx): wandb.Image(fig),
+                    "{}_trajectory_dimensions_patient_{}".format(mode, batch_idx): wandb.Image(dim_fig),
+                }
+            )
         
         plt.close(fig)
+        plt.close(dim_fig)
 
         # metrics
         metricD = metrics_calculation(pred_traj, full_traj, metrics=self.metrics)

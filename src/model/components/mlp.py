@@ -452,6 +452,9 @@ class MLP_conditional_liver_pe_memory(torch.nn.Module):
                  conditional=False,  
                  time_dim = NUM_FREQS * 2,
                  clip = None,
+                 distributional = None,
+                 n_components = 3,
+                 n_quantiles = 3,
                  ):
         super().__init__()
         self.time_varying = time_varying
@@ -461,7 +464,23 @@ class MLP_conditional_liver_pe_memory(torch.nn.Module):
         self.treatment_cond = treatment_cond
         self.memory = memory
         self.dim = dim
+        self.distributional = distributional
+        self.n_components = n_components
+        self.n_quantiles = n_quantiles
         self.indim = dim + (time_dim if time_varying else 0) + (self.treatment_cond if conditional else 0) + (dim * memory)
+
+        if distributional == "gaussian_nll":
+            net_out = dim * 2 + 1  # mu(dim) + log_var(dim) + time_remaining(1)
+        elif distributional == "mdn":
+            # pi(K) + mu(K*dim) + sigma(K*dim) + time_remaining(1)
+            net_out = n_components + n_components * dim * 2 + 1
+        elif distributional == "quantile":
+            net_out = n_quantiles * dim + 1  # quantiles + time_remaining
+        elif distributional == "l1_variance":
+            net_out = self.out_dim  # same as point estimate
+        else:
+            net_out = self.out_dim
+
         self.net = torch.nn.Sequential(
             torch.nn.Linear(self.indim, w),
             torch.nn.SELU(),
@@ -469,39 +488,88 @@ class MLP_conditional_liver_pe_memory(torch.nn.Module):
             torch.nn.SELU(),
             torch.nn.Linear(w, w),
             torch.nn.SELU(),
-            torch.nn.Linear(w,self.out_dim),
+            torch.nn.Linear(w, net_out),
         )
         self.default_class = 0
         self.clip = clip
 
+        if distributional == "gaussian_nll":
+            with torch.no_grad():
+                self.net[-1].bias[dim:2*dim].fill_(-2.0)
+
     def encoding_function(self, time_tensor):
         return positional_encoding_tensor(time_tensor)    
+
+    def _encode_input(self, x):
+        time_tensor = x[:, -1]
+        encoded_time_span = self.encoding_function(time_tensor).reshape(-1, NUM_FREQS * 2)
+        return torch.cat([x[:, :-1], encoded_time_span], dim=1)
 
     def forward_train(self, x):
         """forward pass
         Assume first two dimensions are x, c, then t
         """
-        time_tensor = x[:,-1]
-        encoded_time_span = self.encoding_function(time_tensor).reshape(-1, NUM_FREQS * 2)
-        new_x = torch.cat([x[:,:-1], encoded_time_span], dim=1)
+        new_x = self._encode_input(x)
         result = self.net(new_x)
-        return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
+
+        if self.distributional == "gaussian_nll":
+            mu = result[:, :self.dim]
+            log_var = torch.clamp(result[:, self.dim:2*self.dim], min=-6.0, max=4.0)
+            time_remaining = result[:, -1:]
+            return mu, log_var, x[:, self.dim:-1], time_remaining
+        elif self.distributional == "mdn":
+            K, D = self.n_components, self.dim
+            pi = torch.log_softmax(result[:, :K], dim=1)
+            mu = result[:, K:K + K*D].reshape(-1, K, D)
+            sigma = torch.nn.functional.softplus(result[:, K + K*D:K + 2*K*D]).reshape(-1, K, D) + 1e-4
+            time_remaining = result[:, -1:]
+            return pi, mu, sigma, x[:, self.dim:-1], time_remaining
+        elif self.distributional == "quantile":
+            Q, D = self.n_quantiles, self.dim
+            quantile_preds = result[:, :Q*D].reshape(-1, Q, D)
+            time_remaining = result[:, -1:]
+            return quantile_preds, x[:, self.dim:-1], time_remaining
+        else:
+            return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
+        """ ODE-compatible forward: returns velocity field.
+        Handles both point-estimate and distributional modes.
         """
-        x1 = self.forward_train(x)
-        x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
-        x_coord = x[:,:self.dim]
-        if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
-        else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
+        new_x = self._encode_input(x)
+        result = self.net(new_x)
+        x_coord = x[:, :self.dim]
 
-        final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
+        if self.distributional == "gaussian_nll":
+            mu = result[:, :self.dim]
+            log_var = torch.clamp(result[:, self.dim:2*self.dim], min=-6.0, max=4.0)
+            time_remaining = result[:, -1:]
+            std = torch.exp(0.5 * log_var)
+            x1_coord = mu + std * torch.randn_like(std)
+        elif self.distributional == "mdn":
+            K, D = self.n_components, self.dim
+            pi_logits = result[:, :K]
+            mu = result[:, K:K + K*D].reshape(-1, K, D)
+            # Sample a component
+            component_idx = torch.multinomial(torch.softmax(pi_logits, dim=1), 1).squeeze(1)
+            batch_idx = torch.arange(mu.shape[0], device=mu.device)
+            x1_coord = mu[batch_idx, component_idx]
+            sigma = torch.nn.functional.softplus(result[:, K + K*D:K + 2*K*D]).reshape(-1, K, D) + 1e-4
+            x1_coord = x1_coord + sigma[batch_idx, component_idx] * torch.randn_like(x1_coord)
+            time_remaining = result[:, -1:]
+        elif self.distributional == "quantile":
+            Q, D = self.n_quantiles, self.dim
+            quantile_preds = result[:, :Q*D].reshape(-1, Q, D)
+            x1_coord = quantile_preds[:, Q // 2, :]  # use median quantile
+            time_remaining = result[:, -1:]
+        else:
+            x1_coord = result[:, :self.dim]
+            time_remaining = result[:, -1:]
+
+        if self.clip is None:
+            vt = (x1_coord - x_coord) / (time_remaining + 1e-8)
+        else:
+            vt = (x1_coord - x_coord) / torch.clip(time_remaining, min=self.clip)
+
+        final_vt = torch.cat([vt, torch.zeros_like(x[:, self.dim:-1])], dim=1)
         return final_vt

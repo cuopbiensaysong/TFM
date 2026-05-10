@@ -15,9 +15,5 @@ model_module:
     - variance_dist
     - mse_loss
     - l1_loss
-  # Distributional loss options: null, gaussian_nll, mdn, quantile, l1_variance
-  distributional: null
-  # n_components: 3       # for mdn
-  # n_quantiles: 3        # for quantile
-  # quantile_levels: [0.1, 0.5, 0.9]  # for quantile
-  # lambda_var: 0.1       # for l1_variance
+  distributional: l1_variance
+  lambda_var: 0.1

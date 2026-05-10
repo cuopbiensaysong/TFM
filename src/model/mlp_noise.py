@@ -19,6 +19,9 @@ from model.components.positional_encoding import *
 from model.components.mlp import * 
 from model.components.sde_func_solver import *
 from model.components.grad_util import *
+from utils.loss import (
+    gaussian_nll_loss, mdn_loss, quantile_loss, l1_variance_loss,
+)
 
 class MLP_conditional_memory(torch.nn.Module):
     """ Conditional with many available classes
@@ -35,6 +38,9 @@ class MLP_conditional_memory(torch.nn.Module):
                  conditional=False,  
                  time_dim = NUM_FREQS * 2,
                  clip = None,
+                 distributional = None,
+                 n_components = 3,
+                 n_quantiles = 3,
                  ):
         super().__init__()
         self.time_varying = time_varying
@@ -44,7 +50,22 @@ class MLP_conditional_memory(torch.nn.Module):
         self.treatment_cond = treatment_cond
         self.memory = memory
         self.dim = dim
+        self.distributional = distributional
+        self.n_components = n_components
+        self.n_quantiles = n_quantiles
         self.indim = dim + (time_dim if time_varying else 0) + (self.treatment_cond if conditional else 0) + (dim * memory)
+
+        if distributional == "gaussian_nll":
+            net_out = dim * 2 + 1
+        elif distributional == "mdn":
+            net_out = n_components + n_components * dim * 2 + 1
+        elif distributional == "quantile":
+            net_out = n_quantiles * dim + 1
+        elif distributional == "l1_variance":
+            net_out = self.out_dim
+        else:
+            net_out = self.out_dim
+
         self.net = torch.nn.Sequential(
             torch.nn.Linear(self.indim, w),
             torch.nn.SELU(),
@@ -52,42 +73,89 @@ class MLP_conditional_memory(torch.nn.Module):
             torch.nn.SELU(),
             torch.nn.Linear(w, w),
             torch.nn.SELU(),
-            torch.nn.Linear(w,self.out_dim),
+            torch.nn.Linear(w, net_out),
         )
         self.default_class = 0
         self.clip = clip
-        # self.encoding_function = positional_encoding_tensor()
+
+        if distributional == "gaussian_nll":
+            with torch.no_grad():
+                self.net[-1].bias[dim:2*dim].fill_(-2.0)
 
     def encoding_function(self, time_tensor):
         return positional_encoding_tensor(time_tensor)    
+
+    def _encode_input(self, x):
+        time_tensor = x[:, -1]
+        encoded_time_span = self.encoding_function(time_tensor).reshape(-1, NUM_FREQS * 2)
+        return torch.cat([x[:, :-1], encoded_time_span], dim=1)
 
     def forward_train(self, x):
         """forward pass
         Assume first two dimensions are x, c, then t
         """
-        time_tensor = x[:,-1]
-        encoded_time_span = self.encoding_function(time_tensor).reshape(-1, NUM_FREQS * 2)
-        new_x = torch.cat([x[:,:-1], encoded_time_span], dim=1)
+        new_x = self._encode_input(x)
         result = self.net(new_x)
-        return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
+
+        if self.distributional == "gaussian_nll":
+            mu = result[:, :self.dim]
+            log_var = torch.clamp(result[:, self.dim:2*self.dim], min=-6.0, max=4.0)
+            time_remaining = result[:, -1:]
+            return mu, log_var, x[:, self.dim:-1], time_remaining
+        elif self.distributional == "mdn":
+            K, D = self.n_components, self.dim
+            pi = torch.log_softmax(result[:, :K], dim=1)
+            mu = result[:, K:K + K*D].reshape(-1, K, D)
+            sigma = torch.nn.functional.softplus(result[:, K + K*D:K + 2*K*D]).reshape(-1, K, D) + 1e-4
+            time_remaining = result[:, -1:]
+            return pi, mu, sigma, x[:, self.dim:-1], time_remaining
+        elif self.distributional == "quantile":
+            Q, D = self.n_quantiles, self.dim
+            quantile_preds = result[:, :Q*D].reshape(-1, Q, D)
+            time_remaining = result[:, -1:]
+            return quantile_preds, x[:, self.dim:-1], time_remaining
+        else:
+            return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
+        """ ODE-compatible forward: returns velocity field.
+        Handles both point-estimate and distributional modes.
         """
-        x1 = self.forward_train(x)
-        x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
-        x_coord = x[:,:self.dim]
-        if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
-        else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
+        new_x = self._encode_input(x)
+        result = self.net(new_x)
+        x_coord = x[:, :self.dim]
 
-        final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
+        if self.distributional == "gaussian_nll":
+            mu = result[:, :self.dim]
+            log_var = torch.clamp(result[:, self.dim:2*self.dim], min=-6.0, max=4.0)
+            time_remaining = result[:, -1:]
+            std = torch.exp(0.5 * log_var)
+            x1_coord = mu + std * torch.randn_like(std)
+        elif self.distributional == "mdn":
+            K, D = self.n_components, self.dim
+            pi_logits = result[:, :K]
+            mu = result[:, K:K + K*D].reshape(-1, K, D)
+            component_idx = torch.multinomial(torch.softmax(pi_logits, dim=1), 1).squeeze(1)
+            batch_idx = torch.arange(mu.shape[0], device=mu.device)
+            x1_coord = mu[batch_idx, component_idx]
+            sigma = torch.nn.functional.softplus(result[:, K + K*D:K + 2*K*D]).reshape(-1, K, D) + 1e-4
+            x1_coord = x1_coord + sigma[batch_idx, component_idx] * torch.randn_like(x1_coord)
+            time_remaining = result[:, -1:]
+        elif self.distributional == "quantile":
+            Q, D = self.n_quantiles, self.dim
+            quantile_preds = result[:, :Q*D].reshape(-1, Q, D)
+            x1_coord = quantile_preds[:, Q // 2, :]
+            time_remaining = result[:, -1:]
+        else:
+            x1_coord = result[:, :self.dim]
+            time_remaining = result[:, -1:]
+
+        if self.clip is None:
+            vt = (x1_coord - x_coord) / (time_remaining + 1e-8)
+        else:
+            vt = (x1_coord - x_coord) / torch.clip(time_remaining, min=self.clip)
+
+        final_vt = torch.cat([vt, torch.zeros_like(x[:, self.dim:-1])], dim=1)
         return final_vt
 
 
@@ -179,13 +247,17 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
                  lr=1e-6,
                  sigma = 0.1, 
                  loss_fn = mse_loss,
-                # loss_fn = l1_loss,
                  metrics = ['mse_loss', 'l1_loss'],
                  implementation = "ODE", # can be SDE
                  sde_noise = 0.1,
                  clip = None,
                  naming = None,
                  ode_t_span_points: int = 10,
+                 distributional = None,
+                 n_components = 3,
+                 n_quantiles = 3,
+                 quantile_levels = (0.1, 0.5, 0.9),
+                 lambda_var = 0.1,
                  ):
         if ode_t_span_points < 2:
             raise ValueError("ode_t_span_points must be >= 2 (torch.linspace endpoints).")
@@ -196,28 +268,30 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
                                               conditional=conditional, 
                                               treatment_cond=treatment_cond,
                                               memory=memory,
-                                              clip = clip)
+                                              clip=clip,
+                                              distributional=distributional,
+                                              n_components=n_components,
+                                              n_quantiles=n_quantiles)
         if implementation == "SDE":
-            self.noise_model = MLP_conditional_memory_sde_noise(dim=dim, # @TODO: give \hat{x_1}?
+            self.noise_model = MLP_conditional_memory_sde_noise(dim=dim,
                                                     w=w,
                                                     time_varying=time_varying,
                                                     conditional=conditional,
                                                     treatment_cond=treatment_cond,
                                                     memory=memory,
-                                                    clip = clip)
+                                                    clip=clip)
         else:
-            self.noise_model = MLP_conditional_memory(dim=dim, # @TODO: give \hat{x_1}?
+            self.noise_model = MLP_conditional_memory(dim=dim,
                                                         w=w,
                                                         time_varying=time_varying,
                                                         conditional=conditional,
                                                         treatment_cond=treatment_cond,
                                                         memory=memory,
-                                                        clip = clip)
+                                                        clip=clip)
         self.automatic_optimization = False 
         self.loss_fn = resolve_loss_fn(loss_fn)
         self.save_hyperparameters()
         self.dim = dim
-        # self.out_dim = out_dim
         self.w = w
         self.time_varying = time_varying
         self.conditional = conditional
@@ -231,9 +305,16 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         self.sde_noise = sde_noise
         self.clip = clip
         self.ode_t_span_points = int(ode_t_span_points)
+        self.distributional = distributional
+        self.n_components = n_components
+        self.n_quantiles = n_quantiles
+        self.quantile_levels = tuple(quantile_levels) if quantile_levels else (0.1, 0.5, 0.9)
+        self.lambda_var = lambda_var
 
         if self.memory > 1:
             self.naming += "_Memory_"+str(self.memory)
+        if self.distributional:
+            self.naming += "_" + self.distributional
             
     def __convert_tensor__(self, tensor):
         return tensor.to(torch.float32)
@@ -278,33 +359,81 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         if len(x0_class.shape) == 3:
             x0_class = x0_class.squeeze()
 
-        in_tensor = torch.cat([x,x0_class, t_model], dim = -1)
-        xt = self.flow_model.forward_train(in_tensor)
+        in_tensor = torch.cat([x, x0_class, t_model], dim=-1)
+        output = self.flow_model.forward_train(in_tensor)
 
-        if self.implementation == "SDE":
-            sde_noise = self.noise_model.forward_train(in_tensor)
-            variance = torch.sqrt(t*(1-t))*sde_noise
-            noise = torch.randn_like(xt[:,:self.dim]) * variance
-            loss = self.loss_fn(xt[:,:self.dim] + noise.clone().detach(), x1) + self.loss_fn(xt[:,-1], futuretime)
-            uncertainty =(xt[:,:self.dim].clone().detach() + noise)
-            noise_loss = self.loss_fn(uncertainty,x1)
+        loss = self._compute_flow_loss(output, x1, futuretime, t, in_tensor)
+
+        # Noise model training (only for non-distributional or SDE)
+        if self.distributional is None:
+            if self.implementation == "SDE":
+                xt = output
+                sde_noise = self.noise_model.forward_train(in_tensor)
+                variance = torch.sqrt(t*(1-t))*sde_noise
+                noise = torch.randn_like(xt[:,:self.dim]) * variance
+                uncertainty = (xt[:,:self.dim].clone().detach() + noise)
+                noise_loss = self.loss_fn(uncertainty, x1)
+            else:
+                xt = output
+                uncertainty = torch.abs(xt[:,:self.dim].clone().detach() - x1)
+                noise_loss = self.loss_fn(self.noise_model.forward_train(in_tensor)[:,:self.dim], uncertainty)
         else:
-            loss = self.loss_fn(xt[:,:self.dim], x1) + self.loss_fn(xt[:,-1], futuretime)
-            uncertainty = torch.abs(xt[:,:self.dim].clone().detach() - x1)
-            # noise model incorporation (model loss)
-            noise_loss = self.loss_fn(self.noise_model.forward_train(in_tensor)[:,:self.dim], uncertainty)
+            noise_loss = torch.tensor(0.0, device=x0.device)
 
         flow_opt.zero_grad()
         self.manual_backward(loss)
         flow_opt.step()
         
-        noise_opt.zero_grad()
-        self.manual_backward(noise_loss)
-        noise_opt.step()
+        if self.distributional is None:
+            noise_opt.zero_grad()
+            self.manual_backward(noise_loss)
+            noise_opt.step()
         
         self.log('train_loss', loss)
         self.log('noise_loss', noise_loss)
         return loss + noise_loss
+
+    def _compute_flow_loss(self, output, x1_target, futuretime, t, in_tensor):
+        """Compute flow model loss based on distributional mode."""
+        if self.distributional == "gaussian_nll":
+            mu, log_var, _cond, time_remaining = output
+            loss_coord = gaussian_nll_loss(mu, log_var, x1_target[:, :self.dim])
+            loss_time = mse_loss(time_remaining.squeeze(-1), futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        elif self.distributional == "mdn":
+            pi, mu, sigma, _cond, time_remaining = output
+            loss_coord = mdn_loss(pi, mu, sigma, x1_target[:, :self.dim])
+            loss_time = mse_loss(time_remaining.squeeze(-1), futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        elif self.distributional == "quantile":
+            quantile_preds, _cond, time_remaining = output
+            loss_coord = quantile_loss(quantile_preds, x1_target[:, :self.dim],
+                                       quantiles=self.quantile_levels)
+            loss_time = mse_loss(time_remaining.squeeze(-1), futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        elif self.distributional == "l1_variance":
+            pred_x1 = output[:, :self.dim]
+            pred_time = output[:, -1]
+            loss_coord = l1_variance_loss(pred_x1, x1_target[:, :self.dim],
+                                          lambda_var=self.lambda_var)
+            loss_time = mse_loss(pred_time, futuretime.squeeze(-1))
+            return loss_coord + loss_time
+
+        else:
+            xt = output
+            if self.implementation == "SDE":
+                sde_noise = self.noise_model.forward_train(in_tensor)
+                variance = torch.sqrt(t*(1-t))*sde_noise
+                noise = torch.randn_like(xt[:,:self.dim]) * variance
+                loss = self.loss_fn(xt[:,:self.dim] + noise.clone().detach(), x1_target) + \
+                       self.loss_fn(xt[:,-1], futuretime.squeeze(-1))
+            else:
+                loss = self.loss_fn(xt[:,:self.dim], x1_target) + \
+                       self.loss_fn(xt[:,-1], futuretime.squeeze(-1))
+            return loss
 
     def configure_optimizers(self):
         print("configuring optimizers")
@@ -373,11 +502,23 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
                                 noise_pred, 
                                t_span=full_time,
                                title="{}_trajectory_patient_{}".format(mode, batch_idx))
+        dim_fig = plot_trajectory_dimensions(
+            pred_traj,
+            full_traj,
+            t_span=full_time,
+            title="{}_trajectory_dimensions_patient_{}".format(mode, batch_idx),
+        )
         if self.logger:
             # may cause problem if wandb disabled
-            self.logger.experiment.log({"{}_trajectory_patient_{}".format(mode, batch_idx): wandb.Image(fig)})
+            self.logger.experiment.log(
+                {
+                    "{}_trajectory_patient_{}".format(mode, batch_idx): wandb.Image(fig),
+                    "{}_trajectory_dimensions_patient_{}".format(mode, batch_idx): wandb.Image(dim_fig),
+                }
+            )
         
         plt.close(fig)
+        plt.close(dim_fig)
 
         # metrics
         metricD = metrics_calculation(pred_traj, full_traj, metrics=self.metrics)

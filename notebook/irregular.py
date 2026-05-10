@@ -12,7 +12,7 @@ from torchdyn.core import NeuralODE
 import matplotlib.pyplot as plt
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 SEED = 10
-LOG_DIR = "logs/irregular"
+LOG_DIR = "logs/irregular_sampling"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 from utill import (
@@ -80,7 +80,7 @@ c = np.array([0.25, 2, 0.25]) # np.arange(0.25,5.25,0.25)   # Viscous force coef
 # c = np.array([0.25, 2, 3.75])
 t_max = 10
 
-num_sparse_points = 99
+num_sparse_points = 20
 
 X = []
 T = [] # same for all unnecessary
@@ -497,6 +497,7 @@ class MLP_conditional_memory(torch.nn.Module):
         )
         self.default_class = 0
         self.clip = clip
+        self.t_end = None
 
     def encoding_function(self, time_tensor):
         return positional_encoding_tensor(time_tensor)    
@@ -512,20 +513,15 @@ class MLP_conditional_memory(torch.nn.Module):
         return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
-        """
         x1 = self.forward_train(x)
         x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
         x_coord = x[:,:self.dim]
+        t_current = x[:,-1]
+        remaining_time = (self.t_end - t_current).unsqueeze(-1)
         if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
+            vt = (x1_coord - x_coord) / remaining_time
         else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
+            vt = (x1_coord - x_coord) / torch.clip(remaining_time, min=self.clip)
 
         final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
         return final_vt
@@ -906,6 +902,11 @@ def test_trajectory_ode(batch, model, noise_prediction):  # have to squeeze here
 
         new_x_classes = _build_condition_with_memory(x0_classes, i, model, time_history)
 
+        if noise_prediction:
+            model.flow_model.t_end = times_x1[i]
+        else:
+            model.model.t_end = times_x1[i]
+
         with torch.no_grad():
             if i == 0:
                 testpt = torch.cat([x0_values[i].unsqueeze(0), new_x_classes], dim=1)
@@ -1032,7 +1033,7 @@ def run_training_experiment():
         file_path=file_path,
         t_headings=['t'],
         x_headings=['x'],
-        cond_headings=[],
+        cond_headings=['c'],
         memory=3,
     )
 
@@ -1042,12 +1043,12 @@ def run_training_experiment():
     set_seed(SEED)
 
     model = MLP_Cond_Memory_Module(
-        treatment_cond=0,
+        treatment_cond=1,
         memory=3,
         dim=1,
         w=256,
         time_varying=True,
-        conditional=False,
+        conditional=True,
         lr=1e-3,
         sigma=0.1,
         loss_fn=mse_loss,
