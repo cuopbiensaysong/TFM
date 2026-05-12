@@ -80,14 +80,15 @@ class MLP_conditional_liver_pe(torch.nn.Module):
 
     return the class as is
     """
-    def __init__(self, dim, treatment_cond, out_dim=None, w=64, time_varying=False, conditional=False, time_dim = NUM_FREQS * 2, clip = None):
+    def __init__(self, dim, treatment_cond, out_dim=None, w=64, time_varying=False, conditional=False, time_dim = NUM_FREQS * 2, clip = None, obj = "displacement"):
         super().__init__()
         self.time_varying = time_varying
         if out_dim is None:
-            self.out_dim = dim 
+            self.out_dim = dim
         self.out_dim += 1
         self.treatment_cond = treatment_cond
         self.dim = dim
+        self.obj = obj
         self.indim = dim + (time_dim if time_varying else 0) + (self.treatment_cond if conditional else 0)
         self.net = torch.nn.Sequential(
             torch.nn.Linear(self.indim, w),
@@ -115,50 +116,47 @@ class MLP_conditional_liver_pe(torch.nn.Module):
         return torch.cat([result[:,:-1], x[:,self.dim:-1],result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
-        """
-        x1 = self.forward_train(x)
-        x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
-        x_coord = x[:,:self.dim]
-        if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
+        pred = self.forward_train(x)
+        pred_coord = pred[:,:self.dim]
+        futuretime = pred[:,-1]
+        if self.obj == "x1":
+            numerator = pred_coord - x[:,:self.dim]
         else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
-        final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
-        return final_vt
+            numerator = pred_coord
+        if self.clip is None:
+            vt = numerator / futuretime
+        else:
+            vt = numerator / torch.clip(futuretime, min=self.clip)
+        return torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
 
 class MLP_Cond_Module(pl.LightningModule):
-    def __init__(self, 
+    def __init__(self,
                  treatment_cond,
-                 dim=2, 
-                 w=64, 
-                 time_varying=True, 
+                 dim=2,
+                 w=64,
+                 time_varying=True,
                  conditional=True,
                  lr=1e-6,
-                 sigma = 0.1, 
+                 sigma = 0.1,
                  loss_fn = mse_loss,
                  metrics = ['mse_loss', 'l1_loss'],
                  implementation = "ODE", # can be SDE
                  sde_noise = 0.1,
                  clip = None, # float
                  naming = None,
+                 obj = "displacement",
                  ):
         super().__init__()
-        self.model = MLP_conditional_liver_pe(dim=dim, 
-                                              w=w, 
-                                              time_varying=time_varying, 
-                                              conditional=conditional, 
+        self.model = MLP_conditional_liver_pe(dim=dim,
+                                              w=w,
+                                              time_varying=time_varying,
+                                              conditional=conditional,
                                               treatment_cond=treatment_cond,
-                                              clip = clip)
+                                              clip = clip,
+                                              obj = obj)
         self.loss_fn = loss_fn
         self.save_hyperparameters()
         self.dim = dim
-        # self.out_dim = out_dim
         self.w = w
         self.time_varying = time_varying
         self.conditional = conditional
@@ -170,6 +168,7 @@ class MLP_Cond_Module(pl.LightningModule):
         self.implementation = implementation
         self.sde_noise = sde_noise
         self.clip = clip
+        self.obj = obj
         
             
     def __convert_tensor__(self, tensor):
@@ -189,8 +188,9 @@ class MLP_Cond_Module(pl.LightningModule):
         ut = (x1 - x0) / (data_t_diff + 1e-4)
         t_model = t * data_t_diff + t0.unsqueeze(1)
         futuretime = t1 - t_model
-        return x, ut, t_model, futuretime, t
-    
+        displacement = x1 - x0
+        return x, ut, t_model, futuretime, t, displacement
+
     def training_step(self, batch, batch_idx):
         """_summary_
 
@@ -205,8 +205,8 @@ class MLP_Cond_Module(pl.LightningModule):
         x0, x0_class, x1, x0_time, x1_time = self.__convert_tensor__(x0), self.__convert_tensor__(x0_class), self.__convert_tensor__(x1), self.__convert_tensor__(x0_time), self.__convert_tensor__(x1_time)
 
 
-        x, ut, t_model, futuretime, t = self.__x_processing__(x0, x1, x0_time, x1_time)
-        
+        x, ut, t_model, futuretime, t, displacement = self.__x_processing__(x0, x1, x0_time, x1_time)
+
 
         if len(x0_class.shape) == 3:
             x0_class = x0_class.squeeze(0)
@@ -216,14 +216,26 @@ class MLP_Cond_Module(pl.LightningModule):
         else:
             in_tensor = torch.cat([x, t_model], dim = -1)
         xt = self.model.forward_train(in_tensor)
+        coord_target = displacement if self.obj == "displacement" else x1
 
         if self.implementation == "SDE":
             variance = t*(1-t)*(self.sde_noise ** 2)
             noise = torch.randn_like(xt[:,:self.dim]) * torch.sqrt(variance)
-            loss = self.loss_fn(xt[:,:self.dim]+noise, x1) + self.loss_fn(xt[:,-1], futuretime)
+            loss = self.loss_fn(xt[:,:self.dim]+noise, coord_target) + self.loss_fn(xt[:,-1], futuretime)
         else:
-            loss = self.loss_fn(xt[:,:self.dim], x1) + self.loss_fn(xt[:,-1], futuretime)
+            loss = self.loss_fn(xt[:,:self.dim], coord_target) + self.loss_fn(xt[:,-1], futuretime)
         self.log('train_loss', loss)
+        with torch.no_grad():
+            pred_coord = xt[:,:self.dim].detach()
+            pred_norm = torch.norm(pred_coord, dim=-1)
+            true_norm = torch.norm(coord_target, dim=-1)
+            norm_ratio = pred_norm / (true_norm + 1e-8)
+            self.log('coord_norm_ratio_train', norm_ratio.mean(), on_epoch=True, on_step=False)
+            self.log('coord_norm_ratio_std_train', norm_ratio.std(), on_epoch=True, on_step=False)
+            for d in range(self.dim):
+                pred_var = torch.var(pred_coord[:, d])
+                true_var = torch.var(coord_target[:, d])
+                self.log(f'var_ratio_dim{d}_train', pred_var / (true_var + 1e-8), on_epoch=True, on_step=False)
         return loss
 
     def config_optimizer(self):
@@ -289,6 +301,26 @@ class MLP_Cond_Module(pl.LightningModule):
 
         # metrics
         metricD = metrics_calculation(pred_traj, full_traj, metrics=self.metrics)
+
+        pred_displacements = np.diff(pred_traj, axis=0)
+        true_displacements = np.diff(full_traj, axis=0)
+        pred_norms = np.linalg.norm(pred_displacements, axis=-1)
+        true_norms = np.linalg.norm(true_displacements, axis=-1)
+        norm_ratios = pred_norms / (true_norms + 1e-8)
+        metricD['disp_norm_ratio'] = np.mean(norm_ratios)
+        metricD['disp_norm_ratio_std'] = np.std(norm_ratios)
+
+        for d in range(self.dim):
+            pred_var = np.var(pred_traj[:, d])
+            true_var = np.var(full_traj[:, d])
+            metricD[f'var_ratio_dim{d}'] = pred_var / (true_var + 1e-8)
+
+        time_diffs = np.diff(full_time)
+        velocities = pred_displacements / (time_diffs[:, None] + 1e-8)
+        vel_norms = np.linalg.norm(velocities, axis=-1)
+        metricD['avg_velocity_norm'] = np.mean(vel_norms)
+        metricD['avg_velocity_norm_std'] = np.std(vel_norms)
+
         return np.mean(total_loss), traj_pairs, metricD
 
     def test_trajectory(self,pt_tensor):
@@ -442,25 +474,27 @@ class MLP_conditional_liver_pe_memory(torch.nn.Module):
 
     return the class as is
     """
-    def __init__(self, 
-                 dim, 
+    def __init__(self,
+                 dim,
                  treatment_cond,
                  memory, # how many time steps
-                 out_dim=None, 
-                 w=64, 
-                 time_varying=False, 
-                 conditional=False,  
+                 out_dim=None,
+                 w=64,
+                 time_varying=False,
+                 conditional=False,
                  time_dim = NUM_FREQS * 2,
                  clip = None,
+                 obj = "displacement",
                  ):
         super().__init__()
         self.time_varying = time_varying
         if out_dim is None:
-            self.out_dim = dim 
+            self.out_dim = dim
         self.out_dim += 1 # for the time dimension
         self.treatment_cond = treatment_cond
         self.memory = memory
         self.dim = dim
+        self.obj = obj
         self.indim = dim + (time_dim if time_varying else 0) + (self.treatment_cond if conditional else 0) + (dim * memory)
         self.net = torch.nn.Sequential(
             torch.nn.Linear(self.indim, w),
@@ -475,7 +509,7 @@ class MLP_conditional_liver_pe_memory(torch.nn.Module):
         self.clip = clip
 
     def encoding_function(self, time_tensor):
-        return positional_encoding_tensor(time_tensor)    
+        return positional_encoding_tensor(time_tensor)
 
     def forward_train(self, x):
         """forward pass
@@ -488,20 +522,15 @@ class MLP_conditional_liver_pe_memory(torch.nn.Module):
         return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
-        """
-        x1 = self.forward_train(x)
-        x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
-        x_coord = x[:,:self.dim]
-        if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
+        pred = self.forward_train(x)
+        pred_coord = pred[:,:self.dim]
+        futuretime = pred[:,-1]
+        if self.obj == "x1":
+            numerator = pred_coord - x[:,:self.dim]
         else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
-
-        final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
-        return final_vt
+            numerator = pred_coord
+        if self.clip is None:
+            vt = numerator / futuretime
+        else:
+            vt = numerator / torch.clip(futuretime, min=self.clip)
+        return torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)

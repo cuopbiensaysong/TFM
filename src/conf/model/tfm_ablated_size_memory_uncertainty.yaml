@@ -11,6 +11,7 @@ model_module:
   sde_noise: 0.1
   clip: 1e-2
   sigma: 0.1
+  obj: displacement
   metrics:
     - variance_dist
     - mse_loss

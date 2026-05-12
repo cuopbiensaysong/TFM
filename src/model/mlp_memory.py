@@ -23,37 +23,38 @@ from utils.loss import mse_loss, l1_loss
 
 
 class MLP_Cond_Memory_Module(pl.LightningModule):
-    def __init__(self, 
+    def __init__(self,
                  treatment_cond,
-                 memory=3, # can increase / tune to see effect
-                 dim=2, 
-                 w=64, 
-                 time_varying=True, 
+                 memory=3,
+                 dim=2,
+                 w=64,
+                 time_varying=True,
                  conditional=True,
                  lr=1e-6,
-                 sigma = 0.1, 
+                 sigma = 0.1,
                  loss_fn = mse_loss,
                  metrics = ['mse_loss', 'l1_loss'],
-                 implementation = "ODE", # can be SDE
+                 implementation = "ODE",
                  sde_noise = 0.1,
                  clip = None,
                  naming = None,
                  ode_t_span_points: int = 10,
+                 obj = "displacement",
                  ):
         if ode_t_span_points < 2:
             raise ValueError("ode_t_span_points must be >= 2 (torch.linspace endpoints).")
         super().__init__()
-        self.model = MLP_conditional_liver_pe_memory(dim=dim, 
-                                              w=w, 
-                                              time_varying=time_varying, 
-                                              conditional=conditional, 
+        self.model = MLP_conditional_liver_pe_memory(dim=dim,
+                                              w=w,
+                                              time_varying=time_varying,
+                                              conditional=conditional,
                                               treatment_cond=treatment_cond,
                                               memory=memory,
-                                              clip = clip)
+                                              clip = clip,
+                                              obj = obj)
         self.loss_fn = loss_fn
         self.save_hyperparameters()
         self.dim = dim
-        # self.out_dim = out_dim
         self.w = w
         self.time_varying = time_varying
         self.conditional = conditional
@@ -67,6 +68,7 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
         self.sde_noise = sde_noise
         self.clip = clip
         self.ode_t_span_points = int(ode_t_span_points)
+        self.obj = obj
         if self.memory > 1:
             self.naming += "_Memory_"+str(self.memory)
             
@@ -88,9 +90,9 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
         ut = (x1 - x0) / (data_t_diff + 1e-4)
         t_model = t * data_t_diff + t0.unsqueeze(1)
         futuretime = t1 - t_model
+        displacement = x1 - x0
+        return x, ut, t_model, futuretime, t, displacement
 
-        return x, ut, t_model, futuretime, t
-    
     def training_step(self, batch, batch_idx):
         """_summary_
 
@@ -105,22 +107,34 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
         x0, x0_class, x1, x0_time, x1_time = self.__convert_tensor__(x0), self.__convert_tensor__(x0_class), self.__convert_tensor__(x1), self.__convert_tensor__(x0_time), self.__convert_tensor__(x1_time)
 
 
-        x, ut, t_model, futuretime, t = self.__x_processing__(x0, x1, x0_time, x1_time)
-        
+        x, ut, t_model, futuretime, t, displacement = self.__x_processing__(x0, x1, x0_time, x1_time)
+
 
         if len(x0_class.shape) == 3:
             x0_class = x0_class.squeeze()
 
         in_tensor = torch.cat([x,x0_class, t_model], dim = -1)
         xt = self.model.forward_train(in_tensor)
+        coord_target = displacement if self.obj == "displacement" else x1
 
         if self.implementation == "SDE":
             variance = t*(1-t)*self.sde_noise
             noise = torch.randn_like(xt[:,:self.dim]) * torch.sqrt(variance)
-            loss = self.loss_fn(xt[:,:self.dim] + noise, x1) + self.loss_fn(xt[:,-1], futuretime)
+            loss = self.loss_fn(xt[:,:self.dim] + noise, coord_target) + self.loss_fn(xt[:,-1], futuretime)
         else:
-            loss = self.loss_fn(xt[:,:self.dim], x1) + self.loss_fn(xt[:,-1], futuretime)
+            loss = self.loss_fn(xt[:,:self.dim], coord_target) + self.loss_fn(xt[:,-1], futuretime)
         self.log('train_loss', loss)
+        with torch.no_grad():
+            pred_coord = xt[:,:self.dim].detach()
+            pred_norm = torch.norm(pred_coord, dim=-1)
+            true_norm = torch.norm(coord_target, dim=-1)
+            norm_ratio = pred_norm / (true_norm + 1e-8)
+            self.log('coord_norm_ratio_train', norm_ratio.mean(), on_epoch=True, on_step=False)
+            self.log('coord_norm_ratio_std_train', norm_ratio.std(), on_epoch=True, on_step=False)
+            for d in range(self.dim):
+                pred_var = torch.var(pred_coord[:, d])
+                true_var = torch.var(coord_target[:, d])
+                self.log(f'var_ratio_dim{d}_train', pred_var / (true_var + 1e-8), on_epoch=True, on_step=False)
         return loss
 
     def config_optimizer(self):
@@ -183,6 +197,26 @@ class MLP_Cond_Memory_Module(pl.LightningModule):
 
         # metrics
         metricD = metrics_calculation(pred_traj, full_traj, metrics=self.metrics)
+
+        pred_displacements = np.diff(pred_traj, axis=0)
+        true_displacements = np.diff(full_traj, axis=0)
+        pred_norms = np.linalg.norm(pred_displacements, axis=-1)
+        true_norms = np.linalg.norm(true_displacements, axis=-1)
+        norm_ratios = pred_norms / (true_norms + 1e-8)
+        metricD['disp_norm_ratio'] = np.mean(norm_ratios)
+        metricD['disp_norm_ratio_std'] = np.std(norm_ratios)
+
+        for d in range(self.dim):
+            pred_var = np.var(pred_traj[:, d])
+            true_var = np.var(full_traj[:, d])
+            metricD[f'var_ratio_dim{d}'] = pred_var / (true_var + 1e-8)
+
+        time_diffs = np.diff(full_time)
+        velocities = pred_displacements / (time_diffs[:, None] + 1e-8)
+        vel_norms = np.linalg.norm(velocities, axis=-1)
+        metricD['avg_velocity_norm'] = np.mean(vel_norms)
+        metricD['avg_velocity_norm_std'] = np.std(vel_norms)
+
         return np.mean(total_loss), traj_pairs, metricD
 
     def test_trajectory(self,pt_tensor):

@@ -1,0 +1,64 @@
+Saved plot: logs/firstbug_fixed/harmonic_oscillator.png
+Saved plot: logs/firstbug_fixed/irregular_sampling.png
+Saved script snapshot: logs/firstbug_fixed/irregular_snapshot.py
+Epoch 200/4000, Loss: 0.0009253264870494604
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_200.png
+validation loss: 0.13667659989247719
+Epoch 400/4000, Loss: 5.637717913486995e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_400.png
+validation loss: 0.1275963814308246
+Epoch 600/4000, Loss: 3.7569527194136754e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_600.png
+validation loss: 0.15082946668068567
+Epoch 800/4000, Loss: 4.657690442400053e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_800.png
+validation loss: 0.14881311853726706
+Epoch 1000/4000, Loss: 3.945137723349035e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_1000.png
+validation loss: 0.1346197985112667
+Epoch 1200/4000, Loss: 0.00021226984972599894
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_1200.png
+validation loss: 0.22463367382685342
+Epoch 1400/4000, Loss: 3.2288498914567754e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_1400.png
+validation loss: 0.18590129911899567
+Epoch 1600/4000, Loss: 0.00018451153300702572
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_1600.png
+validation loss: 0.1437406800687313
+Epoch 1800/4000, Loss: 3.878652205457911e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_1800.png
+validation loss: 0.16087148835261664
+Epoch 2000/4000, Loss: 1.957738095370587e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_2000.png
+validation loss: 0.16722002749641737
+Epoch 2200/4000, Loss: 1.9928427718696184e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_2200.png
+validation loss: 0.16567015027006468
+Epoch 2400/4000, Loss: 5.146004696143791e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_2400.png
+validation loss: 0.15447141726811728
+Epoch 2600/4000, Loss: 2.1289917640388012e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_2600.png
+validation loss: 0.16423376897970834
+Epoch 2800/4000, Loss: 1.9622191757662222e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_2800.png
+validation loss: 0.15376667926708856
+Epoch 3000/4000, Loss: 1.6444582797703333e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_3000.png
+validation loss: 0.17281399170557657
+Epoch 3200/4000, Loss: 2.6550336770014837e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_3200.png
+validation loss: 0.1620879036684831
+Epoch 3400/4000, Loss: 2.3230571969179437e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_3400.png
+validation loss: 0.14406090353926024
+Epoch 3600/4000, Loss: 1.9142798919347115e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_3600.png
+validation loss: 0.15833192939559618
+Epoch 3800/4000, Loss: 2.3940001483424567e-05
+Saved plot: logs/firstbug_fixed/validation_trajectory_epoch_3800.png
+validation loss: 0.15279203404982886
+Epoch 4000/4000, Loss: 2.3673070245422423e-05
+Saved plot: logs/firstbug_fixed/harmonic_oscillator.png
+Saved plot: logs/firstbug_fixed/irregular_sampling.png
+Saved script snapshot: logs/firstbug_fixed/irregular_snapshot.py

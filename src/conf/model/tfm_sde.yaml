@@ -10,7 +10,8 @@ model_module:
   clip: 1e-2
   sigma: 0.1
   ode_t_span_points: 10
-  loss_fn: l1_loss
+  loss_fn: mse_loss
+  obj: displacement
   metrics:
     - variance_dist
     - mse_loss

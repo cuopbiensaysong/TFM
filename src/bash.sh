@@ -19,9 +19,9 @@
 
 #  Overfit 
 python draw_trajectory.py \
-  --config ../outputs/2026-05-05/10-13-35/.hydra/config.yaml \
-  --ckpt ../outputs/2026-05-05/10-13-35/checkpoints/Noise_MLP_Cond_memory_Module_ODE_Memory_3_eICU_DataModule_sepsis/best_model.ckpt \
-  --out-dir ../outputs/2026-05-05/10-13-35/trajectory_plots_ode_t_span_points_100 \
+  --config ../outputs/2026-05-10/14-03-35/.hydra/config.yaml \
+  --ckpt ../outputs/2026-05-10/14-03-35/checkpoints/Noise_MLP_Cond_memory_Module_ODE_Memory_3_eICU_DataModule_sepsis/best_model.ckpt \
+  --out-dir ../outputs/2026-05-10/14-03-35/trajectory_plots_ode \
   --split test \
   --ode-t-span-points 10 \
   --seed 42

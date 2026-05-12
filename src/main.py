@@ -100,9 +100,9 @@ def train_model(cfg):
     wandb_config['seed'] = cfg.seed
 
     if cfg.wandb_logging and not(cfg.skip_training):
-        wandb.init(project="clinical_trajectory",
-                    dir = 'wandb_log/',
-                    name = 'overfit_first_200',
+        wandb.init(project=cfg.wandb_project,
+                    dir = cfg.wandb_dir,
+                    name = cfg.wandb_name,
                     config = wandb_config
                     )
         wandb_logger = WandbLogger()

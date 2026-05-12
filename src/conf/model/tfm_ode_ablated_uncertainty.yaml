@@ -10,6 +10,7 @@ model_module:
   sigma: 0.1
   dim: 2
   ode_t_span_points: 10
+  obj: displacement
   metrics:
     - variance_dist
     - mse_loss

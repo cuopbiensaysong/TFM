@@ -1,17 +1,28 @@
 # %%
 import pandas as pd
 import numpy as np
-
+import random
+import pickle
+import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 
 from torchdyn.core import NeuralODE
 
 import matplotlib.pyplot as plt
-import pickle
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+SEED = 10
+LOG_DIR = "logs/firstbug_fixed_add_cond"
+os.makedirs(LOG_DIR, exist_ok=True)
 
-
+from utill import (
+    log_print,
+    set_seed,
+    _unpack_eval_batch,
+    _build_condition_with_memory,
+    save_figure,
+    save_script_copy,
+)
 # %% [markdown]
 # # Data Generation
 
@@ -52,7 +63,7 @@ def get_damping_zone(m,k,c):
     zeta = c / (2 * np.sqrt(k * m))
     if zeta > 1:
         return "over-damped"
-    if zeta == 1:
+    if np.isclose(zeta, 1.0):
         return "critically damped"
     if zeta < 1:
         return "under-damped"
@@ -68,6 +79,8 @@ k = 1.0   # Spring constant
 c = np.array([0.25, 2, 0.25]) # np.arange(0.25,5.25,0.25)   # Viscous force coefficient
 # c = np.array([0.25, 2, 3.75])
 t_max = 10
+
+num_sparse_points = 99
 
 X = []
 T = [] # same for all unnecessary
@@ -97,17 +110,11 @@ plt.xlabel('Time')
 plt.ylabel('Position')
 plt.title(f'Harmonic Oscillator')
 plt.legend()
+first_plot_path = save_figure(plt.gcf(), LOG_DIR, "harmonic_oscillator.png")
 plt.show()
+log_print(f"Saved plot: {first_plot_path}", LOG_DIR)
 
-# %%
-
-
-# %%
-num_sparse_points = 99
-
-# TODO: Pick random 20 points from each trajectory
-
-_rng = np.random.default_rng(10)
+_rng = np.random.default_rng(SEED)
 plt.figure()
 X_new, T_new = [], []
 for traj_idx, (xi, ti, labeli, color) in enumerate(zip(X, T, labels, colors)):
@@ -124,8 +131,9 @@ plt.xlabel('Time')
 plt.ylabel('Position')
 plt.title(f'Irregular sampling: {num_sparse_points} random time indices per trajectory')
 plt.legend()
-# plt.savefig(os.path.join(_plot_dir, 'irregular_data_plot.png'), dpi=150, bbox_inches='tight')
+irregular_plot_path = save_figure(plt.gcf(), LOG_DIR, "irregular_sampling.png")
 plt.show()
+log_print(f"Saved plot: {irregular_plot_path}", LOG_DIR)
 
 
 # %%
@@ -154,17 +162,12 @@ df = pd.DataFrame({
 # # for this overfitting demo, using the same data for train/val/test
 df_all = {'train': df, 'val': df, 'test': df}
 
-file_path = "3Oscillation_data.pkl"
+file_path = os.path.join(LOG_DIR, "3Oscillation_data.pkl")
 with open(file_path, 'wb') as f:
     pickle.dump(df_all, f)
 
 # %% [markdown]
 # # Dataloader
-
-# %%
-from torch.utils.data import Dataset, DataLoader
-import pandas as pd
-import numpy as np
 
 class TrainingDataset(Dataset):
     def __init__(self, x0_values, x0_classes, x1_values, times_x0, times_x1):
@@ -433,18 +436,6 @@ def metrics_calculation(pred, true, metrics=['mse_loss'], cutoff=-0.91, map_idx 
 
     return loss_D
 
-# %%
-import torch
-import math
-import time
-
-import matplotlib.pyplot as plt
-import numpy as np
-from torchdyn.core import NeuralODE
-from torch import optim
-import torch.functional as F
-
-
 PE_BASE = 0.012 # 0.012615662610100801
 NUM_FREQS = 10
 
@@ -489,8 +480,8 @@ class MLP_conditional_memory(torch.nn.Module):
         super().__init__()
         self.time_varying = time_varying
         if out_dim is None:
-            self.out_dim = dim 
-        self.out_dim += 1 # for the time dimension
+            out_dim = dim
+        self.out_dim = out_dim + 1  # include predicted time-to-next-step
         self.treatment_cond = treatment_cond
         self.memory = memory
         self.dim = dim
@@ -506,6 +497,7 @@ class MLP_conditional_memory(torch.nn.Module):
         )
         self.default_class = 0
         self.clip = clip
+        self.t_end = None
 
     def encoding_function(self, time_tensor):
         return positional_encoding_tensor(time_tensor)    
@@ -521,20 +513,15 @@ class MLP_conditional_memory(torch.nn.Module):
         return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
-        """
         x1 = self.forward_train(x)
         x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
         x_coord = x[:,:self.dim]
+        t_current = x[:,-1]
+        remaining_time = (self.t_end - t_current).unsqueeze(-1)
         if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
+            vt = (x1_coord - x_coord) / remaining_time
         else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
+            vt = (x1_coord - x_coord) / torch.clip(remaining_time, min=self.clip)
 
         final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
         return final_vt
@@ -558,7 +545,8 @@ class MLP_conditional_memory_sde_noise(torch.nn.Module):
         super().__init__()
         self.time_varying = time_varying
         if out_dim is None:
-            self.out_dim = 1 # for noise 
+            out_dim = 1
+        self.out_dim = out_dim
         self.treatment_cond = treatment_cond
         self.memory = memory
         self.dim = dim
@@ -686,6 +674,7 @@ class MLP_Cond_Memory_Module(torch.nn.Module):
 # %%
 def train_model(model, noise_prediction, train_loader, val_loader=None, num_epochs=10, validation_interval=100, device='cuda'):
     model.to(device)
+    epoch_losses = []
 
     # with noise prediction
     if noise_prediction: 
@@ -747,14 +736,29 @@ def train_model(model, noise_prediction, train_loader, val_loader=None, num_epoc
 
                 train_loss += loss.item()
 
+        epoch_avg_loss = train_loss / len(train_loader)
+        epoch_losses.append(epoch_avg_loss)
+
         # validation
         if (epoch+1) % validation_interval == 0:
-            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {train_loss/len(train_loader)}")
+            log_print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_avg_loss}", LOG_DIR)
             if val_loader: 
-                test_model(model, noise_prediction, val_loader, device)
+                test_model(model, noise_prediction, val_loader, device, plot_suffix=f"epoch_{epoch+1}")
+
+    loss_fig = plt.figure(figsize=(7, 4))
+    ax = loss_fig.add_subplot(111)
+    ax.plot(np.arange(1, num_epochs + 1), epoch_losses, color="purple")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Train Loss")
+    ax.set_title("Training Loss Curve")
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    loss_plot_path = save_figure(loss_fig, LOG_DIR, "training_loss_curve.png")
+    plt.close(loss_fig)
+    log_print(f"Saved plot: {loss_plot_path}", LOG_DIR)
 
 # %%
-def test_model(model, noise_prediction, test_loader, device):
+def test_model(model, noise_prediction, test_loader, device, plot_suffix=None):
     model.eval()  # Set the model to evaluation mode
     list_of_pairs = []
     list_of_times = {}
@@ -794,9 +798,12 @@ def test_model(model, noise_prediction, test_loader, device):
         # ax.set_title("damped_oscillations_epoch_{}".format(self.current_epoch))
         ax.legend(fontsize='10')
         plt.tight_layout()
+        suffix = plot_suffix if plot_suffix is not None else "eval"
+        eval_plot_path = save_figure(fig, LOG_DIR, f"validation_trajectory_{suffix}.png")
         plt.show()
         plt.close()
-    print(f"validation loss: {loss_sum/len(test_loader)}")
+    log_print(f"Saved plot: {eval_plot_path}", LOG_DIR)
+    log_print(f"validation loss: {loss_sum/len(test_loader)}", LOG_DIR)
 
 def test_func_step(batch, batch_idx, model, noise_prediction):
     """Assuming each batch is one patient"""
@@ -840,8 +847,14 @@ def test_func_step(batch, batch_idx, model, noise_prediction):
     # Calculate metrics
     metricD = metrics_calculation(pred_traj, full_traj)
     return np.mean(total_loss), traj_pairs, metricD, np.mean(total_noise_loss), noise_pairs, full_time
-    
-def test_trajectory_ode(batch, model, noise_prediction): # have to squeeze here to adjust for bs=1
+
+
+
+
+
+
+
+def test_trajectory_ode(batch, model, noise_prediction):  # have to squeeze here to adjust for bs=1
     # with noise prediction
     
     if noise_prediction:
@@ -854,7 +867,7 @@ def test_trajectory_ode(batch, model, noise_prediction): # have to squeeze here 
     total_pred = []
     mse = []
 
-    x0_values, x0_classes, x1_values, times_x0, times_x1 = batch
+    x0_values, x0_classes, x1_values, times_x0, times_x1 = _unpack_eval_batch(batch)
     # print("="*10)
     # print("HERE test_trajectory ode")
     # print(f"x0 from dataloader {x0_values.shape}")
@@ -867,11 +880,6 @@ def test_trajectory_ode(batch, model, noise_prediction): # have to squeeze here 
     # print(f"history {x0_classes[0][-(model.memory * model.dim):].shape}")
     # print(f"x0_values.shape[0] {x0_values.shape[0]}")
     # print(f"x1_values.shape[0] {x1_values.shape[0]}")
-    x0_values = x0_values.squeeze(0)
-    x0_classes = x0_classes.squeeze(0)
-    x1_values = x1_values.squeeze(0)
-    times_x0 = times_x0.squeeze()
-    times_x1 = times_x1.squeeze()
     # print(f"x0 squeezed {x0_values.shape}")
     # print(f"cond squeezed {x0_classes.shape}")
     # print(f"x1 squeezed {x1_values.shape}")
@@ -882,6 +890,7 @@ def test_trajectory_ode(batch, model, noise_prediction): # have to squeeze here 
     len_path = x0_values.shape[0]
     # assert len_path == x1_values.shape[0]
 
+    time_history = None
     if model.memory > 0:
         time_history = x0_classes[0][-(model.memory * model.dim):]
 
@@ -891,17 +900,12 @@ def test_trajectory_ode(batch, model, noise_prediction): # have to squeeze here 
         # print("-"*10)
         # print(f"i {i}")
 
-        if model.memory > 0:
-            # print(f"cond memory>0 part 1 shape {x0_classes[i][:-(model.memory * model.dim)].unsqueeze(0).shape}")
-            # print(f"cond memory>0 part 1 {x0_classes[i][:-(model.memory * model.dim)].unsqueeze(0)}")
-            # print(f"cond memory>0 part 2 shape {time_history.unsqueeze(0).shape}")
-            # print(f"cond memory>0 part 2 {time_history.unsqueeze(0)}")
-            new_x_classes = torch.cat([x0_classes[i][:-(model.memory * model.dim)].unsqueeze(0), time_history.unsqueeze(0)], dim=1)
-            # print(new_x_classes.shape)
-            # print(x0_classes[i].shape)
+        new_x_classes = _build_condition_with_memory(x0_classes, i, model, time_history)
+
+        if noise_prediction:
+            model.flow_model.t_end = times_x1[i]
         else:
-            new_x_classes = x0_classes[i].unsqueeze(0)
-            # print(f"cond memory=0 {new_x_classes.shape}")
+            model.model.t_end = times_x1[i]
 
         with torch.no_grad():
             if i == 0:
@@ -949,12 +953,7 @@ def test_trajectory_sde(batch, model, noise_prediction):
     total_pred, noise_pred = [], []
     mse, noise_mse = []
 
-    x0_values, x0_classes, x1_values, times_x0, times_x1 = batch
-    x0_values = x0_values.squeeze(0)
-    x0_classes = x0_classes.squeeze(0)
-    x1_values = x1_values.squeeze(0)
-    times_x0 = times_x0.squeeze()
-    times_x1 = times_x1.squeeze()
+    x0_values, x0_classes, x1_values, times_x0, times_x1 = _unpack_eval_batch(batch)
 
     # if len(x0_classes.shape) == 1:
     #     x0_classes = x0_classes.unsqueeze(1)
@@ -963,16 +962,14 @@ def test_trajectory_sde(batch, model, noise_prediction):
     len_path = x0_values.shape[0]
     assert len_path == x1_values.shape[0]
 
+    time_history = None
     if model.memory > 0:
         time_history = x0_classes[0][-(model.memory * model.dim):]
 
     for i in range(len_path):
         time_span = torch.linspace(times_x0[i], times_x1[i], 10).to(x0_values.device)
 
-        if model.memory > 0:
-            new_x_classes = torch.cat([x0_classes[i][:-(model.memory * model.dim)].unsqueeze(0), time_history.unsqueeze(0)], dim=1)
-        else:
-            new_x_classes = x0_classes[i]
+        new_x_classes = _build_condition_with_memory(x0_classes, i, model, time_history)
 
         with torch.no_grad():
             if i == 0:
@@ -1024,38 +1021,56 @@ def _sde_solver(sde, initial_state, time_span):
 # %% [markdown]
 # # train experiments
 
-# %%
-data_loader_1d_3m = eICUDataLoader(batch_size=512, file_path=file_path, 
-                             t_headings=['t'],
-                             x_headings=['x'],
-                             cond_headings=[],
-                             memory=3)
 
-train_loader_1d_3m = data_loader_1d_3m.get_train_loader(shuffle=True)
-val_loader_1d_3m = data_loader_1d_3m.get_val_loader()
 
-# %%
-import random
-random.seed(0)
-np.random.seed(0)
-torch.manual_seed(0)
 
-# Create the model instance
-model = MLP_Cond_Memory_Module(treatment_cond=0, memory=3, 
-                                     dim=1, w=256, 
-                                     time_varying=True, 
-                                     conditional=False, 
-                                     lr=1e-3, 
-                                     sigma=0.1, 
-                                     loss_fn=mse_loss, 
-                                     metrics=['mse_loss'], 
-                                     implementation="ODE", 
-                                     sde_noise=0.1, 
-                                     clip=0.01)
+def run_training_experiment():
+    script_copy_path = save_script_copy(__file__, LOG_DIR, "irregular_snapshot.py")
+    log_print(f"Saved script snapshot: {script_copy_path}", LOG_DIR)
 
-# Train the model
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-train_model(model, False, train_loader_1d_3m, val_loader_1d_3m, num_epochs=4000, validation_interval=200, device=device)
+    data_loader_1d_3m = eICUDataLoader(
+        batch_size=512,
+        file_path=file_path,
+        t_headings=['t'],
+        x_headings=['x'],
+        cond_headings=['c'],
+        memory=3,
+    )
+
+    train_loader_1d_3m = data_loader_1d_3m.get_train_loader(shuffle=True)
+    val_loader_1d_3m = data_loader_1d_3m.get_val_loader()
+
+    set_seed(SEED)
+
+    model = MLP_Cond_Memory_Module(
+        treatment_cond=1,
+        memory=3,
+        dim=1,
+        w=256,
+        time_varying=True,
+        conditional=True,
+        lr=1e-3,
+        sigma=0.1,
+        loss_fn=mse_loss,
+        metrics=['mse_loss'],
+        implementation="ODE",
+        sde_noise=0.1,
+        clip=0.01,
+    )
+
+    train_model(
+        model,
+        False,
+        train_loader_1d_3m,
+        val_loader_1d_3m,
+        num_epochs=4000,
+        validation_interval=200,
+        device=DEVICE,
+    )
+
+
+if __name__ == "__main__":
+    run_training_experiment()
 
 # %%
 

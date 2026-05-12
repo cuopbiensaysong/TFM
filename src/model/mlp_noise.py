@@ -25,21 +25,23 @@ class MLP_conditional_memory(torch.nn.Module):
 
     return the class as is
     """
-    def __init__(self, 
-                 dim, 
+    def __init__(self,
+                 dim,
                  treatment_cond,
                  memory, # how many time steps
-                 out_dim=None, 
-                 w=64, 
-                 time_varying=False, 
-                 conditional=False,  
+                 out_dim=None,
+                 w=64,
+                 time_varying=False,
+                 conditional=False,
                  time_dim = NUM_FREQS * 2,
                  clip = None,
+                 obj = "displacement",
                  ):
         super().__init__()
         self.time_varying = time_varying
+        self.obj = obj
         if out_dim is None:
-            self.out_dim = dim 
+            self.out_dim = dim
         self.out_dim += 1 # for the time dimension
         self.treatment_cond = treatment_cond
         self.memory = memory
@@ -72,23 +74,18 @@ class MLP_conditional_memory(torch.nn.Module):
         return torch.cat([result[:,:-1], x[:,self.dim:-1], result[:,-1].unsqueeze(1)], dim=1)
 
     def forward(self, x):
-        """ call forward_train for training
-            x here is x_t
-            xt = (t)x1 + (1-t)x0
-            (xt - tx1)/(1-t) = x0
-        """
-        x1 = self.forward_train(x)
-        x1_coord = x1[:,:self.dim]
-        t = x[:,-1]
-        pred_time_till_t1 = x1[:,-1]
-        x_coord = x[:,:self.dim]
-        if self.clip is None:
-            vt = (x1_coord - x_coord)/(pred_time_till_t1)
+        pred = self.forward_train(x)
+        pred_coord = pred[:,:self.dim]
+        futuretime = pred[:,-1]
+        if self.obj == "x1":
+            numerator = pred_coord - x[:,:self.dim]
         else:
-            vt = (x1_coord - x_coord)/torch.clip((pred_time_till_t1),min=self.clip)
-
-        final_vt = torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
-        return final_vt
+            numerator = pred_coord
+        if self.clip is None:
+            vt = numerator / futuretime
+        else:
+            vt = numerator / torch.clip(futuretime, min=self.clip)
+        return torch.cat([vt, torch.zeros_like(x[:,self.dim:-1])], dim=1)
 
 
 class MLP_conditional_memory_sde_noise(torch.nn.Module):
@@ -169,36 +166,37 @@ def resolve_loss_fn(loss_fn):
     raise TypeError(f"loss_fn must be callable or str, got {type(loss_fn)}")
 
 class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
-    def __init__(self, 
+    def __init__(self,
                  treatment_cond,
-                 memory=3, # can increase / tune to see effect
-                 dim=2, 
-                 w=64, 
-                 time_varying=True, 
+                 memory=3,
+                 dim=2,
+                 w=64,
+                 time_varying=True,
                  conditional=True,
                  lr=1e-6,
-                 sigma = 0.1, 
+                 sigma = 0.1,
                  loss_fn = mse_loss,
-                # loss_fn = l1_loss,
                  metrics = ['mse_loss', 'l1_loss'],
-                 implementation = "ODE", # can be SDE
+                 implementation = "ODE",
                  sde_noise = 0.1,
                  clip = None,
                  naming = None,
                  ode_t_span_points: int = 10,
+                 obj = "displacement",
                  ):
         if ode_t_span_points < 2:
             raise ValueError("ode_t_span_points must be >= 2 (torch.linspace endpoints).")
         super().__init__()
-        self.flow_model = MLP_conditional_memory(dim=dim, 
-                                              w=w, 
-                                              time_varying=time_varying, 
-                                              conditional=conditional, 
+        self.flow_model = MLP_conditional_memory(dim=dim,
+                                              w=w,
+                                              time_varying=time_varying,
+                                              conditional=conditional,
                                               treatment_cond=treatment_cond,
                                               memory=memory,
-                                              clip = clip)
+                                              clip = clip,
+                                              obj = obj)
         if implementation == "SDE":
-            self.noise_model = MLP_conditional_memory_sde_noise(dim=dim, # @TODO: give \hat{x_1}?
+            self.noise_model = MLP_conditional_memory_sde_noise(dim=dim,
                                                     w=w,
                                                     time_varying=time_varying,
                                                     conditional=conditional,
@@ -206,18 +204,18 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
                                                     memory=memory,
                                                     clip = clip)
         else:
-            self.noise_model = MLP_conditional_memory(dim=dim, # @TODO: give \hat{x_1}?
+            self.noise_model = MLP_conditional_memory(dim=dim,
                                                         w=w,
                                                         time_varying=time_varying,
                                                         conditional=conditional,
                                                         treatment_cond=treatment_cond,
                                                         memory=memory,
-                                                        clip = clip)
-        self.automatic_optimization = False 
+                                                        clip = clip,
+                                                        obj = obj)
+        self.automatic_optimization = False
         self.loss_fn = resolve_loss_fn(loss_fn)
         self.save_hyperparameters()
         self.dim = dim
-        # self.out_dim = out_dim
         self.w = w
         self.time_varying = time_varying
         self.conditional = conditional
@@ -231,6 +229,7 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         self.sde_noise = sde_noise
         self.clip = clip
         self.ode_t_span_points = int(ode_t_span_points)
+        self.obj = obj
 
         if self.memory > 1:
             self.naming += "_Memory_"+str(self.memory)
@@ -253,9 +252,9 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         ut = (x1 - x0) / (data_t_diff + 1e-4)
         t_model = t * data_t_diff + t0.unsqueeze(1)
         futuretime = t1 - t_model
+        displacement = x1 - x0
+        return x, ut, t_model, futuretime, t, displacement
 
-        return x, ut, t_model, futuretime, t
-    
     def training_step(self, batch, batch_idx):
         """_summary_
 
@@ -272,38 +271,52 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         x0, x0_class, x1, x0_time, x1_time = self.__convert_tensor__(x0), self.__convert_tensor__(x0_class), self.__convert_tensor__(x1), self.__convert_tensor__(x0_time), self.__convert_tensor__(x1_time)
 
 
-        x, ut, t_model, futuretime, t = self.__x_processing__(x0, x1, x0_time, x1_time)
-        
+        x, ut, t_model, futuretime, t, displacement = self.__x_processing__(x0, x1, x0_time, x1_time)
+
 
         if len(x0_class.shape) == 3:
             x0_class = x0_class.squeeze()
 
         in_tensor = torch.cat([x,x0_class, t_model], dim = -1)
         xt = self.flow_model.forward_train(in_tensor)
+        coord_target = displacement if self.obj == "displacement" else x1
 
         if self.implementation == "SDE":
             sde_noise = self.noise_model.forward_train(in_tensor)
             variance = torch.sqrt(t*(1-t))*sde_noise
             noise = torch.randn_like(xt[:,:self.dim]) * variance
-            loss = self.loss_fn(xt[:,:self.dim] + noise.clone().detach(), x1) + self.loss_fn(xt[:,-1], futuretime)
-            uncertainty =(xt[:,:self.dim].clone().detach() + noise)
-            noise_loss = self.loss_fn(uncertainty,x1)
+            loss = self.loss_fn(xt[:,:self.dim] + noise.clone().detach(), coord_target) + self.loss_fn(xt[:,-1], futuretime)
+            uncertainty = (xt[:,:self.dim].clone().detach() + noise)
+            noise_loss = self.loss_fn(uncertainty, coord_target)
         else:
-            loss = self.loss_fn(xt[:,:self.dim], x1) + self.loss_fn(xt[:,-1], futuretime)
-            uncertainty = torch.abs(xt[:,:self.dim].clone().detach() - x1)
-            # noise model incorporation (model loss)
+            loss = self.loss_fn(xt[:,:self.dim], coord_target) + self.loss_fn(xt[:,-1], futuretime)
+            uncertainty = torch.abs(xt[:,:self.dim].clone().detach() - coord_target)
             noise_loss = self.loss_fn(self.noise_model.forward_train(in_tensor)[:,:self.dim], uncertainty)
 
         flow_opt.zero_grad()
         self.manual_backward(loss)
         flow_opt.step()
-        
+
         noise_opt.zero_grad()
         self.manual_backward(noise_loss)
         noise_opt.step()
-        
+
         self.log('train_loss', loss)
         self.log('noise_loss', noise_loss)
+        with torch.no_grad():
+            pred_coord = xt[:,:self.dim].detach()
+            pred_norm = torch.norm(pred_coord, dim=-1)
+            true_norm = torch.norm(coord_target, dim=-1)
+            norm_ratio = pred_norm / (true_norm + 1e-8)
+
+            if norm_ratio.mean() > 1000:
+                print('pred_norm:' , pred_norm) 
+            self.log('coord_norm_ratio_train', norm_ratio.mean(), on_epoch=True, on_step=False)
+            self.log('coord_norm_ratio_std_train', norm_ratio.std(), on_epoch=True, on_step=False)
+            for d in range(self.dim):
+                pred_var = torch.var(pred_coord[:, d])
+                true_var = torch.var(coord_target[:, d])
+                self.log(f'var_ratio_dim{d}_train', pred_var / (true_var + 1e-8), on_epoch=True, on_step=False)
         return loss + noise_loss
 
     def configure_optimizers(self):
@@ -326,7 +339,8 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
         self.log('val_loss', loss, on_epoch=True, on_step=False, sync_dist=True)
         self.log('noise_val_loss', noise_loss, on_epoch=True, on_step=False, sync_dist=True)
         for key, value in metricD.items():
-            self.log(key+"_val", value, on_epoch=True, on_step=False, sync_dist=True)
+            # self.log(key+"_val", value, on_epoch=True, on_step=False, sync_dist=True)
+            self.log(key+"_val", value, on_epoch=False, on_step=True, sync_dist=True)
         # return total_loss, traj_pairs
         return {'val_loss':loss, 'traj_pairs':pairs}
 
@@ -365,22 +379,62 @@ class Noise_MLP_Cond_Memory_Module(pl.LightningModule):
 
         full_traj = full_traj.detach().cpu().numpy()
         pred_traj = pred_traj.detach().cpu().numpy()
-        full_time = full_time.detach().cpu().numpy()
+        full_time = full_time.detach().cpu().numpy()        
+
+        # metrics
+        metricD = metrics_calculation(pred_traj, full_traj, metrics=self.metrics)
+
+        pred_displacements = np.diff(pred_traj, axis=0)
+        true_displacements = np.diff(full_traj, axis=0)
+        pred_norms = np.linalg.norm(pred_displacements, axis=-1)
+        true_norms = np.linalg.norm(true_displacements, axis=-1)
+        norm_ratios = pred_norms / (true_norms + 1e-8)
+        metricD['disp_norm_ratio'] = np.mean(norm_ratios)
+        metricD['disp_norm_ratio_std'] = np.std(norm_ratios)
 
         # graph
+        for d in range(self.dim):
+            pred_var = np.var(pred_traj[:, d])
+            true_var = np.var(full_traj[:, d])
+            metricD[f'var_ratio_dim{d}'] = pred_var / (true_var + 1e-8)
+
+        time_diffs = np.diff(full_time)
+        velocities = true_displacements / (time_diffs[:, None] + 1e-8)
+        vel_norms = np.linalg.norm(velocities, axis=-1)
+
+        true_velocities =  pred_displacements / (time_diffs[:, None] + 1e-8)
+        true_vel_norms = np.linalg.norm(true_velocities, axis=-1)
+
+
+        metricD['vel_norm_ratio_of_mean'] = np.mean(vel_norms) / np.mean(true_vel_norms)
+        metricD['vel_norm__ratio_of_std'] = np.std(vel_norms) / np.std(true_vel_norms)
+
         fig = plot_3d_path_ind_noise(pred_traj, 
                                full_traj,
                                 noise_pred, 
                                t_span=full_time,
-                               title="{}_trajectory_patient_{}".format(mode, batch_idx))
+                               title=f"{mode}_trajectory_patient_{batch_idx}")
+        
+        dim_fig = plot_trajectory_dimensions(
+            pred_traj,
+            full_traj,
+            t_span=full_time,
+            title=f"{mode}_traj_{batch_idx}_avgVE_{metricD['vel_norm_ratio_of_mean']}_{metricD['var_ratio_dim0']}_{metricD['var_ratio_dim1']}"
+        )
+
+
         if self.logger:
             # may cause problem if wandb disabled
-            self.logger.experiment.log({"{}_trajectory_patient_{}".format(mode, batch_idx): wandb.Image(fig)})
+            self.logger.experiment.log(
+                {
+                    "{}_trajectory_patient_{}".format(mode, batch_idx): wandb.Image(fig),
+                    "{}_trajectory_dimensions_patient_{}".format(mode, batch_idx): wandb.Image(dim_fig),
+                }
+            )
         
         plt.close(fig)
+        plt.close(dim_fig)
 
-        # metrics
-        metricD = metrics_calculation(pred_traj, full_traj, metrics=self.metrics)
         return np.mean(total_loss), traj_pairs, metricD, np.mean(total_noise_loss), noise_pairs
 
     def test_trajectory(self,pt_tensor):

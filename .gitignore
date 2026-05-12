@@ -7,5 +7,4 @@ wandb_log/*
 checkpoints/*
 .env
 data/*
-notebooks/*.png
-notebooks/*.pkl
+notebooks/logs/*
